@@ -120,6 +120,11 @@ def win_rate(matchups: dict, deck: str, opponent: str, k: float,
     wins, losses, ties = matchups.get((deck, opponent), (0, 0, 0))
     rule = TIE_MODES[mode]
 
+    # A mirror is exactly 50% by symmetry, and carries no uncertainty about it.
+    if deck == opponent:
+        n = wins + losses + (ties if rule["counts_ties"] else 0)
+        return 50.0, 0.0, n
+
     alpha = rule["alpha"](wins, losses, ties, k)
     beta = rule["beta"](wins, losses, ties, k)
     total = alpha + beta
@@ -161,7 +166,7 @@ def expected_win_rates(matchups: dict, shares: dict, k: float,
             # are the caller's assumption, so they carry no uncertainty here.
             variance += (w ** 2) * var
             games += n
-            if n < THIN:
+            if opponent != deck and n < THIN:
                 thin += 1
         margin = Z * math.sqrt(variance) * 100
         results.append({

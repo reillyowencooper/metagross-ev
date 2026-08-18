@@ -73,6 +73,7 @@
                        <strong>rank</strong> for a bucket like Other, which you cannot register.</p>
                 </div>
                 <div class="card-actions">
+                    <button type="button" class="btn" id="add-custom">Add your own deck</button>
                     <button type="button" class="btn btn-quiet" id="reset-shares">Reset to observed</button>
                     <button type="button" class="btn btn-quiet" id="even-shares">Even split</button>
                 </div>
@@ -81,6 +82,53 @@
             <div class="share-list" id="share-list"></div>
 
             <p class="share-total" id="share-total"></p>
+        </section>
+
+        <!-- ---------- your own deck ---------- -->
+        <section class="card" id="step-custom" hidden>
+            <div class="card-head">
+                <div>
+                    <h2>Your own deck</h2>
+                    <p class="card-sub">For a brew with no tournament record. Give it a win rate
+                       against each deck in the field. Your numbers regress toward 50% exactly as a
+                       real record does, so an untested deck cannot win on assertion alone.</p>
+                </div>
+                <div class="card-actions">
+                    <button type="button" class="btn btn-quiet" id="remove-custom">Remove</button>
+                </div>
+            </div>
+
+            <div class="custom-meta">
+                <label class="field field-grow">
+                    <span>Deck name</span>
+                    <input type="text" id="custom-name" placeholder="Your deck" maxlength="40" autocomplete="off">
+                </label>
+                <label class="field">
+                    <span>How much testing</span>
+                    <select id="custom-evidence">
+                        <option value="10">A guess</option>
+                        <option value="30">Some testing</option>
+                        <option value="100">Well tested</option>
+                        <option value="300">Heavily tested</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>Meta share</span>
+                    <span class="share-input-wrap">
+                        <input type="number" id="custom-share" min="0" max="100" step="0.1" value="0"
+                               inputmode="decimal" aria-label="Meta share for your deck">
+                        <span class="pct">%</span>
+                    </span>
+                </label>
+                <div class="field">
+                    <span>Roles</span>
+                    <span class="role-pills" id="custom-roles"></span>
+                </div>
+            </div>
+
+            <p class="custom-hint" id="custom-hint"></p>
+
+            <div class="share-list" id="custom-rates"></div>
         </section>
 
         <!-- ---------- results ---------- -->
@@ -190,6 +238,16 @@
             the table separates groups that the data can tell apart. Inside a group, the order is
             noise, and a deck one place higher is not a better choice. The interval covers the games
             played. It does not cover your shares being wrong, which is usually the larger risk.
+        </p>
+        <p>
+            <strong>Your own deck</strong> is for a brew with no tournament record. You give it a
+            win rate against each deck in the field, and you say how much testing stands behind
+            those numbers. An estimate backed by 30 games enters the arithmetic as an 18–12 record,
+            so it regresses toward 50% exactly as a real record does. An untested deck therefore
+            cannot climb the ranking on assertion alone, and the page shows what each estimate
+            counts as after regression. Give it a meta share and it becomes an opponent too: every
+            other deck then faces it at the complement of your numbers, because a matchup you win
+            60% of the time is one they win 40% of the time.
         </p>
         <p>
             The page shows the sample size everywhere. A <span class="thin-flag">thin</span> label

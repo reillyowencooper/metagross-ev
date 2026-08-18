@@ -42,6 +42,16 @@ filter, change it in the private repository.
 - A tie is a choice. `TIE_MODES` in `app.js` and `expected_win_rates.py` hold the
   three readings, each as the two sides of a Beta posterior. The snapshot stores
   wins, losses and ties separately, so no refetch is needed to switch.
+- A mirror is exactly 50% with zero variance, by symmetry, and never counts as
+  thin. Trainer Hill's own mirror rows are already even, so this matters only for
+  a hand-entered deck, where a Beta(10, 10) mirror would otherwise widen the
+  interval for no reason.
+- `state.custom` is one hand-entered deck, keyed by the reserved slug `__custom`.
+  It holds a win rate per opponent plus an evidence count, which `pseudoCounts`
+  turns into W/L so an estimate and a record run through identical maths. Its
+  opposite side is the complement, so it can join the field. `counts()` is the
+  single place that knows the difference; everything above it works on slugs.
+  The CLI has no equivalent, so parity checks must use real decks only.
 - A deck has two independent roles, `noRank` and `noField`. One flag cannot
   express both cases: Other belongs in the field but is not ranked, and a rogue
   deck is ranked but held out of the field.

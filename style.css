@@ -295,8 +295,11 @@ main {
     transition: border-color 0.12s, box-shadow 0.12s;
 }
 .share-row input::-webkit-outer-spin-button,
-.share-row input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.share-row input { -moz-appearance: textfield; appearance: textfield; }
+.share-row input::-webkit-inner-spin-button,
+.custom-meta input::-webkit-outer-spin-button,
+.custom-meta input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.share-row input,
+.custom-meta input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .share-row input:focus {
     outline: none;
     border-color: var(--accent);
@@ -345,7 +348,7 @@ table.data tbody tr:last-child td { border-bottom: 0; }
 .result-row.is-open { background: var(--border-soft); }
 .result-rank { color: var(--muted); font-weight: 500; width: 34px; }
 .result-deck { font-weight: 600; color: var(--fg); }
-.result-deck-inner { display: flex; align-items: center; gap: 8px; }
+.result-deck-inner { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .result-wr { font-weight: 700; color: var(--fg); font-size: 14px; }
 .result-share, .result-games { color: var(--muted); font-size: 12.5px; }
 
@@ -684,3 +687,56 @@ a.deck-chip-name:hover { color: var(--accent); text-decoration: underline; }
     table.data thead th.result-ci-head,
     table.data tbody td.result-ci { display: none; }
 }
+
+/* ---------- your own deck ---------- */
+
+.custom-meta {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-bottom: 12px;
+}
+.custom-meta .field-grow { flex: 1 1 200px; }
+.custom-meta input[type="text"] {
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--fg);
+    transition: border-color 0.12s, box-shadow 0.12s;
+}
+.custom-meta input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.custom-meta .share-input-wrap input { width: 74px; }
+.custom-meta #custom-share:disabled { color: var(--muted-soft); background: var(--border-soft); }
+
+.custom-hint {
+    margin: 0 0 14px;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.custom-hint strong { color: var(--fg-soft); font-variant-numeric: tabular-nums; }
+
+#custom-rates input { width: 62px; }
+
+/* An estimate is not a record, and the results table should never let that blur. */
+.held-flag.is-custom {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+/* Keep a labelled row on one line: the badges are short, the name is not. */
+table.data tbody td.result-deck { white-space: nowrap; }
+.held-flag { margin-left: 0; }

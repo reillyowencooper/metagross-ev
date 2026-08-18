@@ -15,6 +15,10 @@ const state = {
        out of the field. One flag could not say both. */
     noRank: new Set(),
     noField: new Set(),
+    /* One deck the user describes by hand, for a brew that has no tournament
+       record yet. Null when unused. Its matchups are estimates, not counts, so
+       they arrive as a win rate plus how much testing stands behind it. */
+    custom: null,
     k: 20,                // regression strength, in pseudo games
     tieMode: 'ignore',    // how a tie counts: ignore | losses | half
     includeMirror: true,
@@ -25,6 +29,17 @@ const state = {
 };
 
 const THIN = 20;          // games below which a matchup is flagged thin
+const CUSTOM = '__custom';  // reserved slug for the hand-entered deck
+
+/* How much testing stands behind a hand-entered win rate, as a game count. The
+   same regression applies to an estimate as to a record, so a deck cannot climb
+   the ranking on assertion alone. */
+const EVIDENCE = [
+    { n: 10, label: 'A guess' },
+    { n: 30, label: 'Some testing' },
+    { n: 100, label: 'Well tested' },
+    { n: 300, label: 'Heavily tested' },
+];
 /* Past this many decks the grid stops being readable long before it stops being
    possible: 130 decks is 16,900 cells and over a megabyte of markup, with
    column labels too narrow to read. Show a note instead of a wall. */
@@ -117,11 +132,55 @@ function describeSnapshot() {
    interval further down comes from, so the two always tell the same story.
    A pair with no games lands on exactly 50% with a wide interval, which is
    also how a missing matchup is handled. */
-function matchup(i, j) {
-    const m = state.grid[i][j];
-    const w = m ? m.wins : 0;
-    const l = m ? m.losses : 0;
-    const t = m ? m.ties : 0;
+/* The win rate the user typed for the custom deck against one opponent.
+   Anything they left alone is an even matchup. */
+function customRate(slug) {
+    const v = state.custom?.rates.get(slug);
+    return Number.isFinite(v) ? v : 50;
+}
+
+/* Turn an estimate into the counts it is worth. A 60% call backed by 30 games
+   of testing enters the same arithmetic as an 18-12 record, so an estimate and
+   a record are directly comparable. */
+function pseudoCounts(pct, n) {
+    const p = Math.min(100, Math.max(0, pct)) / 100;
+    return { w: p * n, l: (1 - p) * n, t: 0, estimated: true };
+}
+
+/* Raw counts behind one matchup, from either side. A custom deck has no record,
+   so its side comes from the user's estimate, and the opposite side is the
+   complement of it: if you beat a deck 60% of the time, it beats you 40%. */
+function counts(aSlug, bSlug) {
+    const c = state.custom;
+    if (c && aSlug === CUSTOM && bSlug === CUSTOM) return null;   // mirror
+    if (c && aSlug === CUSTOM) return pseudoCounts(customRate(bSlug), c.evidence);
+    if (c && bSlug === CUSTOM) return pseudoCounts(100 - customRate(aSlug), c.evidence);
+
+    const a = state.bySlug.get(aSlug);
+    const b = state.bySlug.get(bSlug);
+    if (!a || !b || a.index === undefined || b.index === undefined) return null;
+    const m = state.grid[a.index][b.index];
+    return m ? { w: m.wins, l: m.losses, t: m.ties, estimated: false }
+             : { w: 0, l: 0, t: 0, estimated: false };
+}
+
+function matchup(aSlug, bSlug) {
+    /* A mirror is exactly 50% by symmetry, whatever the record says, and it
+       carries no uncertainty about that. Trainer Hill's own mirror rows are
+       already even, so this only matters for a hand-entered deck, where a
+       Beta(10, 10) mirror would otherwise widen the interval for no reason. */
+    if (aSlug === bSlug) {
+        const c0 = counts(aSlug, bSlug);
+        return {
+            wr: 50, raw: 50, variance: 0, mirror: true,
+            n: c0 ? c0.w + c0.l + (state.tieMode === 'ignore' ? 0 : c0.t) : 0,
+            estimated: false,
+            record: c0 ? `${c0.w}–${c0.l}–${c0.t}` : null,
+        };
+    }
+
+    const c = counts(aSlug, bSlug);
+    const { w, l, t, estimated } = c || { w: 0, l: 0, t: 0, estimated: false };
     const mode = TIE_MODES[state.tieMode];
 
     const alpha = mode.alpha(w, l, t, state.k);
@@ -137,31 +196,65 @@ function matchup(i, j) {
         ? (alpha * beta) / (total * total * (total + 1))
         : 1 / 12;
 
+    const rawA = mode.alpha(w, l, t, 0);
+    const rawB = mode.beta(w, l, t, 0);
+
     return {
         wr: total > 0 ? (alpha / total) * 100 : 50,
-        raw: n > 0 ? (mode.alpha(w, l, t, 0) / (mode.alpha(w, l, t, 0) + mode.beta(w, l, t, 0))) * 100 : null,
+        raw: n > 0 ? (rawA / (rawA + rawB)) * 100 : null,
         variance,
         n,
-        record: m ? `${w}–${l}–${t}` : null,
+        estimated,
+        record: !c ? null
+              : estimated ? 'your estimate'
+              : `${w}–${l}–${t}`,
     };
 }
 
 /* The field: every selected deck the user left in it, weighted by the share
    they typed and normalized so the answer reads as a win rate. */
+/* The custom deck stands in for a deck record so the rest of the page does not
+   have to know it is different. It carries no index, so grid lookups skip it. */
+function customDeckRecord() {
+    return {
+        slug: CUSTOM,
+        name: state.custom.name.trim() || 'Your deck',
+        icons: [],
+        share: 0,
+        games: 0,
+        isCustom: true,
+    };
+}
+
+function registerCustom() {
+    if (state.custom) state.bySlug.set(CUSTOM, customDeckRecord());
+    else state.bySlug.delete(CUSTOM);
+}
+
+/* Every deck that plays a part, real or hand-entered. */
+function allSlugs() {
+    return state.custom ? [...state.selected, CUSTOM] : [...state.selected];
+}
+
 function buildField() {
-    const rows = state.selected
+    const rows = allSlugs()
         .filter((slug) => !state.noField.has(slug))
-        .map((slug) => ({ slug, deck: state.bySlug.get(slug), share: Number(state.shares.get(slug)) || 0 }))
+        .map((slug) => ({ slug, deck: state.bySlug.get(slug), share: shareOf(slug) }))
         .filter((r) => r.deck && r.share > 0);
     const total = rows.reduce((s, r) => s + r.share, 0);
     return { rows, total };
+}
+
+function shareOf(slug) {
+    if (slug === CUSTOM) return Number(state.custom?.share) || 0;
+    return Number(state.shares.get(slug)) || 0;
 }
 
 function computeResults() {
     const { rows, total } = buildField();
     if (!rows.length || total <= 0) return [];
 
-    const results = state.selected
+    const results = allSlugs()
         .filter((slug) => !state.noRank.has(slug))
         .map((slug) => state.bySlug.get(slug))
         .filter(Boolean)
@@ -171,7 +264,7 @@ function computeResults() {
             );
             const weight = opponents.reduce((s, r) => s + r.share, 0);
             const breakdown = opponents.map((r) => {
-                const stats = matchup(deck.index, r.deck.index);
+                const stats = matchup(deck.slug, r.slug);
                 return {
                     slug: r.slug,
                     name: r.deck.name,
@@ -203,10 +296,12 @@ function computeResults() {
                 ciLow: Math.max(0, expected - Z * se),
                 ciHigh: Math.min(100, expected + Z * se),
                 inField: !state.noField.has(deck.slug),
+                isCustom: deck.slug === CUSTOM,
+                estimated: breakdown.some((b) => b.estimated),
                 shareOfField: total > 0 && !state.noField.has(deck.slug)
-                    ? (Number(state.shares.get(deck.slug)) || 0) / total : 0,
+                    ? shareOf(deck.slug) / total : 0,
                 games: breakdown.reduce((s, b) => s + b.n, 0),
-                thin: breakdown.filter((b) => b.n < THIN).length,
+                thin: breakdown.filter((b) => !b.mirror && b.n < THIN).length,
                 breakdown,
             };
         })
@@ -405,6 +500,66 @@ function updateShareTotal() {
     totalEl.innerHTML = text;
 }
 
+/* ---------- your own deck ---------- */
+
+function renderCustom() {
+    const card = el('step-custom');
+    const c = state.custom;
+    el('add-custom').hidden = !!c;
+    if (!c) { card.hidden = true; return; }
+    card.hidden = false;
+
+    el('custom-name').value = c.name;
+    el('custom-evidence').value = String(c.evidence);
+    el('custom-share').value = c.share;
+    el('custom-share').disabled = state.noField.has(CUSTOM);
+
+    const noRank = state.noRank.has(CUSTOM);
+    const noField = state.noField.has(CUSTOM);
+    el('custom-roles').innerHTML = `
+        <button type="button" class="field-pill${noRank ? '' : ' is-in'}"
+                data-crole="rank" aria-pressed="${!noRank}"
+                title="${noRank ? 'Not ranked. Click to rank it.' : 'Ranked in the results.'}">rank</button>
+        <button type="button" class="field-pill${noField ? '' : ' is-in'}"
+                data-crole="field" aria-pressed="${!noField}"
+                title="${noField ? 'Not an opponent. Click to add it to the field.'
+                                 : 'An opponent too. Others face it at the complement of your numbers.'}">field</button>`;
+
+    // One row per deck already in play, so the estimates match the field.
+    const opponents = state.selected.filter((slug) => !state.noField.has(slug));
+    if (!opponents.length) {
+        el('custom-rates').innerHTML =
+            '<p class="empty-note">Add decks to the field first, then set a win rate against each.</p>';
+    } else {
+        el('custom-rates').innerHTML = opponents.map((slug) => {
+            const d = state.bySlug.get(slug);
+            const typed = customRate(slug);
+            const shown = matchup(CUSTOM, slug).wr;
+            const moved = Math.abs(shown - typed) > 0.5;
+            return `<div class="share-row">
+                <span class="deck-icons">${iconsHtml(d.icons)}</span>
+                <span class="deck-chip-text">
+                    <span class="deck-chip-name">${escapeHtml(d.name)}</span>
+                    <span class="deck-chip-share">${moved ? `counts as ${fmtPct(shown)}` : 'no regression'}</span>
+                </span>
+                <span class="share-input-wrap">
+                    <input type="number" min="0" max="100" step="1" inputmode="decimal"
+                           value="${typed}" data-crate="${slug}"
+                           aria-label="Your win rate against ${escapeHtml(d.name)}">
+                    <span class="pct">%</span>
+                </span>
+            </div>`;
+        }).join('');
+    }
+
+    const n = c.evidence;
+    el('custom-hint').innerHTML =
+        `Each estimate enters the maths as ${n} games, so it regresses toward 50% `
+      + `exactly as a real record does. A 60% call reads as `
+      + `<strong>${fmtPct(((0.6 * n + state.k / 2) / (n + state.k)) * 100)}</strong> at this setting. `
+      + `Raise the testing only if you have really played the games.`;
+}
+
 /* ---------- results ---------- */
 
 function renderResults(results) {
@@ -454,6 +609,7 @@ function resultRowHtml(r, i, spread) {
             <span class="result-deck-inner">
                 <span class="deck-icons">${iconsHtml(r.deck.icons)}</span>
                 ${escapeHtml(r.deck.name)}
+                ${r.isCustom ? '<span class="held-flag is-custom" title="Your own numbers, not a tournament record">estimate</span>' : ''}
                 ${r.inField ? '' : '<span class="held-flag" title="Ranked, but not part of the field">rank only</span>'}
             </span>
         </td>
@@ -487,7 +643,7 @@ function breakdownHtml(r) {
             </td>
             <td class="num">${b.raw === null ? '—' : fmtPct(b.raw)}</td>
             <td class="num">${b.record || '—'}</td>
-            <td class="num">${b.n}${b.n < THIN ? '<span class="thin-flag">thin</span>' : ''}</td>
+            <td class="num">${b.n}${!b.mirror && b.n < THIN ? '<span class="thin-flag">thin</span>' : ''}</td>
             <td class="num">${fmtPct(b.weight * b.wr)}</td>
         </tr>`;
     }).join('');
@@ -544,7 +700,7 @@ function renderMatrix(results) {
             if (row.slug === col.slug) {
                 return `<td class="cell is-mirror" title="Mirror match">—</td>`;
             }
-            const m = matchup(row.index, col.index);
+            const m = matchup(row.slug, col.slug);
             const step = scaleStep(m.wr);
             return `<td class="cell${step.dark ? ' on-dark' : ''}${m.n < THIN ? ' is-thin' : ''}"
                 style="background:var(${step.css})"
@@ -592,7 +748,7 @@ function hideTooltip() { tooltip().hidden = true; }
 function cellTooltip(rowSlug, colSlug) {
     const a = state.bySlug.get(rowSlug);
     const b = state.bySlug.get(colSlug);
-    const m = matchup(a.index, b.index);
+    const m = matchup(rowSlug, colSlug);
     return `<span class="tt-title"><strong>${escapeHtml(a.name)}</strong> vs ${escapeHtml(b.name)}</span>
         <span class="tt-num">${fmtPct(m.wr)} after regression</span><br>
         <span class="tt-num">${m.raw === null
@@ -605,7 +761,7 @@ function cellTooltip(rowSlug, colSlug) {
 
 function downloadCsv(results) {
     const head = ['rank', 'deck', 'expected_win_rate', 'ci_low', 'ci_high', 'group',
-        'in_field', 'your_meta_share_pct', 'games', 'thin_matchups'];
+        'source', 'in_field', 'your_meta_share_pct', 'games', 'thin_matchups'];
     const lines = [
         `# tie rule: ${TIE_MODES[state.tieMode].formula} · regression k = ${state.k}`,
         head.join(','),
@@ -618,6 +774,7 @@ function downloadCsv(results) {
             r.ciLow.toFixed(2),
             r.ciHigh.toFixed(2),
             r.tier,
+            r.isCustom ? 'estimate' : 'record',
             r.inField ? 'yes' : 'no',
             r.inField ? (Number(state.shares.get(r.deck.slug)) || 0).toFixed(1) : '',
             r.games,
@@ -647,6 +804,14 @@ function syncHash() {
     if (state.noField.size) parts.push(`nofield=${[...state.noField].join(',')}`);
     if (!state.includeMirror) parts.push('mirror=0');
     if (state.openDeck) parts.push(`open=${state.openDeck}`);
+    const c = state.custom;
+    if (c) {
+        parts.push(`cname=${encodeURIComponent(c.name)}`);
+        parts.push(`cevid=${c.evidence}`);
+        if (c.share) parts.push(`cshare=${c.share}`);
+        const rates = [...c.rates].filter(([slug]) => state.selected.includes(slug));
+        if (rates.length) parts.push(`crates=${rates.map(([k2, v]) => `${k2}:${v}`).join(',')}`);
+    }
     history.replaceState(null, '', `${location.pathname}#${parts.join('&')}`);
 }
 
@@ -664,13 +829,32 @@ function restoreFromHash() {
             state.shares.set(slug, Number.isFinite(pct) ? pct : observedPercent(slug));
         }
     }
+    if (params.has('cname') || params.has('crates')) {
+        const evid = Number(params.get('cevid'));
+        state.custom = {
+            name: params.get('cname') || '',
+            evidence: EVIDENCE.some((e) => e.n === evid) ? evid : 30,
+            share: Math.max(0, Number(params.get('cshare')) || 0),
+            rates: new Map(),
+        };
+        for (const entry of (params.get('crates') || '').split(',').filter(Boolean)) {
+            const [slug, rate] = entry.split(':');
+            const v = Number(rate);
+            if (state.bySlug.has(slug) && Number.isFinite(v)) {
+                state.custom.rates.set(slug, Math.min(100, Math.max(0, v)));
+            }
+        }
+        registerCustom();
+        if (!state.custom.share) state.noField.add(CUSTOM);
+    }
+
     const k = Number(params.get('k'));
     if (Number.isFinite(k) && k >= 0 && k <= 60) state.k = k;
     const ties = params.get('ties');
     if (ties && TIE_MODES[ties]) state.tieMode = ties;
     for (const [key, set] of [['norank', state.noRank], ['nofield', state.noField]]) {
         const v = params.get(key);
-        if (v) v.split(',').filter((s) => state.bySlug.has(s)).forEach((s) => set.add(s));
+        if (v) v.split(',').filter((s) => state.bySlug.has(s) || s === CUSTOM).forEach((s) => set.add(s));
     }
     if (params.get('mirror') === '0') state.includeMirror = false;
     const open = params.get('open');
@@ -688,6 +872,7 @@ function render() {
     el('step-shares').hidden = !has;
     el('step-results').hidden = !has;
     el('step-settings').hidden = !has;
+    el('add-custom').parentElement.hidden = !has;
 
     el('shrink-label').textContent = state.k === 0 ? '· off' : `· k = ${state.k}`;
     el('shrink-hint').textContent = state.k === 0
@@ -699,6 +884,7 @@ function render() {
         `${TIE_MODES[state.tieMode].label} · regression k = ${state.k}`;
 
     renderShares();
+    renderCustom();
     const results = computeResults();
     renderResults(results);
     renderMatrix(results);
@@ -706,7 +892,7 @@ function render() {
     return results;
 }
 
-/* Recompute without touching the share inputs, so focus and caret survive. */
+/* Recompute without rebuilding any input, so focus and caret survive. */
 function renderLive() {
     const results = computeResults();
     renderResults(results);
@@ -727,6 +913,7 @@ function toggleDeck(slug, on) {
         state.selected = state.selected.filter((s) => s !== slug);
         state.noRank.delete(slug);
         state.noField.delete(slug);
+        state.custom?.rates.delete(slug);
         if (state.openDeck === slug) state.openDeck = null;
     }
     renderDeckPicker();
@@ -753,6 +940,8 @@ function wire() {
         state.selected = [];
         state.noRank.clear();
         state.noField.clear();
+        state.custom = null;
+        registerCustom();
         state.openDeck = null;
         renderDeckPicker();
         render();
@@ -807,6 +996,60 @@ function wire() {
         } else {
             set.add(slug);
         }
+        render();
+    });
+
+    el('add-custom').addEventListener('click', () => {
+        state.custom = { name: '', evidence: 30, share: 0, rates: new Map() };
+        state.noField.add(CUSTOM);   // rank it against the field by default
+        registerCustom();
+        render();
+        el('custom-name').focus();
+    });
+
+    el('remove-custom').addEventListener('click', () => {
+        state.custom = null;
+        state.noRank.delete(CUSTOM);
+        state.noField.delete(CUSTOM);
+        if (state.openDeck === CUSTOM) state.openDeck = null;
+        registerCustom();
+        render();
+    });
+
+    el('custom-name').addEventListener('input', (e) => {
+        state.custom.name = e.target.value;
+        registerCustom();
+        renderLive();
+    });
+
+    el('custom-evidence').addEventListener('change', (e) => {
+        state.custom.evidence = Number(e.target.value);
+        render();
+    });
+
+    el('custom-share').addEventListener('input', (e) => {
+        const pct = Number(e.target.value);
+        state.custom.share = Number.isFinite(pct) && pct >= 0 ? pct : 0;
+        renderLive();
+    });
+
+    el('custom-rates').addEventListener('input', (e) => {
+        const input = e.target.closest('input[data-crate]');
+        if (!input) return;
+        const pct = Number(input.value);
+        state.custom.rates.set(input.dataset.crate,
+            Number.isFinite(pct) ? Math.min(100, Math.max(0, pct)) : 50);
+        renderLive();
+    });
+
+    el('custom-roles').addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-crole]');
+        if (!btn) return;
+        const set = btn.dataset.crole === 'rank' ? state.noRank : state.noField;
+        const other = btn.dataset.crole === 'rank' ? state.noField : state.noRank;
+        if (set.has(CUSTOM)) set.delete(CUSTOM);
+        else if (other.has(CUSTOM)) return;   // both off would do nothing
+        else set.add(CUSTOM);
         render();
     });
 

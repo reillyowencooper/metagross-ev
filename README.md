@@ -30,6 +30,23 @@ Expect the full-meta ranking to put small-sample decks near the top. A deck with
 200 games can look strong on very little evidence. This is what the intervals
 and the thin labels are for: read them before you believe a rank.
 
+### A deck of your own
+
+**Add your own deck** describes a brew that has no tournament record. Give it a
+win rate against each deck in the field, and say how much testing stands behind
+those numbers.
+
+The testing level becomes a game count. An estimate backed by 30 games enters the
+arithmetic as an 18–12 record, so it regresses toward 50% exactly as a real
+record does. A 60% call reads as 56% at that setting, and the page shows you
+what each estimate counts as. An untested deck cannot climb the ranking on
+assertion alone.
+
+Give it a meta share and it becomes an opponent as well. Every other deck then
+faces it at the complement of your numbers: a matchup you win 60% of the time is
+one they win 40% of the time. This is how you ask what your brew would do *to*
+the meta, not only how it fares against it.
+
 ### Two roles per deck
 
 Every deck has two roles, and you can switch either one off.

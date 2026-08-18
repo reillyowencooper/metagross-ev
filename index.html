@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Metagross-EV — Expected Win Rates for Pokémon TCG</title>
-    <meta name="description" content="Tell it what meta you expect to face, and it'll tell you which deck has the best win rate into that field. Built on Trainer Hill matchup data.">
+    <title>Metagross-EV: Expected Win Rates for Pokémon TCG</title>
+    <meta name="description" content="Enter the meta you expect to face and see which deck has the best win rate into that field. Built on Trainer Hill matchup data.">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,7 +16,7 @@
         <h1>Expected Win Rates</h1>
         <p class="subtitle">
             Weight <a href="https://www.trainerhill.com/meta?game=PTCG" target="_blank" rel="noopener">Trainer Hill</a>
-            matchup data by the meta you actually expect to face.
+            matchup data by the meta you expect to face.
         </p>
         <p class="snapshot" id="snapshot">Loading matchup data…</p>
     </header>
@@ -27,9 +27,9 @@
             <div class="card-head">
                 <div>
                     <h2><span class="step-num">1</span> Choose decks</h2>
-                    <p class="card-sub">Pick the decks you think you'll run into. By default each one gets ranked
-                       and also counts as an opponent — you can split those two jobs up in the
-                       next step.</p>
+                    <p class="card-sub">Pick the decks you think you'll run into. Each one gets ranked and also
+                       counts as an opponent, and you can split those two jobs up in the next
+                       step.</p>
                 </div>
                 <div class="card-actions">
                     <button type="button" class="btn" data-preset="8">Top 8</button>
@@ -65,12 +65,12 @@
             <div class="card-head">
                 <div>
                     <h2><span class="step-num">2</span> Set expected meta share</h2>
-                    <p class="card-sub">Everything starts at its current usage on Trainer Hill — type over any of
-                       it with what you actually expect. Each deck is doing two jobs here, and you
-                       can turn either one off: <strong>rank</strong> puts it in the results,
-                       <strong>field</strong> makes it an opponent. Turn off <strong>field</strong>
-                       to try a deck nobody's playing yet, and turn off <strong>rank</strong> for a
-                       bucket like Other that you can't actually register.</p>
+                    <p class="card-sub">Everything starts at its current usage on Trainer Hill, and you can type over
+                       any of it. Each deck here is doing two jobs. <strong>Rank</strong> controls
+                       whether it shows up in the results below. Switch <strong>field</strong> off
+                       and the other decks stop having to play against it, which is how you try a
+                       deck nobody plays yet. You can't register the Other bucket, so it keeps its
+                       place in the field with rank switched off.</p>
                 </div>
                 <div class="card-actions">
                     <button type="button" class="btn btn-quiet" id="reset-shares">Reset to observed</button>
@@ -96,10 +96,9 @@
             <div class="card-head">
                 <div>
                     <h2>Your own deck</h2>
-                    <p class="card-sub">For a brew with no tournament record yet. Give it a win rate into each
-                       deck in the field, and be honest about how much testing is behind those
-                       numbers — they regress toward 50% just like a real record does, so an
-                       untested deck can't rank itself up.</p>
+                    <p class="card-sub">For a brew with no tournament record yet. Give it a win rate into each deck
+                       in the field, and be honest about how much testing sits behind those numbers.
+                       They regress toward 50% the same way a real record would.</p>
                 </div>
                 <div class="card-actions">
                     <button type="button" class="btn btn-quiet" id="remove-custom">Remove</button>
@@ -144,10 +143,10 @@
             <div class="card-head">
                 <div>
                     <h2><span class="step-num">3</span> Expected win rates</h2>
-                    <p class="card-sub">Here's how each deck does into the field you just described. Read the
-                       interval rather than the decimal — if the gap between two decks is smaller
-                       than their intervals, it isn't really a gap. Click any deck for its
-                       matchup-by-matchup breakdown.</p>
+                    <p class="card-sub">Each deck's win rate into the field you just described. If the gap between
+                       two decks is smaller than their intervals, the games don't support putting
+                       one above the other. Click any deck for its matchup-by-matchup
+                       breakdown.</p>
                 </div>
                 <div class="card-actions">
                     <span class="settings-summary" id="settings-summary"></span>
@@ -209,64 +208,62 @@
     <footer>
         <h2>How this works</h2>
         <p>
-            All of the matchup data here comes from <a href="https://www.trainerhill.com/meta?game=PTCG" target="_blank" rel="noopener">Trainer Hill</a>,
-            which does the genuinely hard work of collecting and publishing tournament results —
-            this page just reweights it. The filter up at the top tells you exactly which
-            tournaments are in the pool.
+            All the matchup data comes from <a href="https://www.trainerhill.com/meta?game=PTCG" target="_blank" rel="noopener">Trainer Hill</a>,
+            which collects and publishes the tournament results that everything here sits on top of.
+            This page only reweights what they already gathered. If you want to know which
+            tournaments went into the numbers, the filter at the top of the page spells it out.
         </p>
         <p>
             A deck's <strong>expected win rate</strong> is its win rate into every deck you listed,
-            weighted by how much of the field you think each of those decks will be. Say you expect
-            the field to be 40% Dragapult and 60% Gardevoir, and your deck wins 45% into Dragapult
-            and 55% into Gardevoir. Your expected win rate is
-            <code>(0.4 × 45 + 0.6 × 55) / 1.0 = 51%</code>.
+            weighted by how much of the field you think each one will be. Suppose you expect 40%
+            Dragapult and 60% Gardevoir, and your deck wins 45% into Dragapult and 55% into
+            Gardevoir. That works out to <code>(0.4 × 45 + 0.6 × 55) / 1.0 = 51%</code>.
         </p>
         <p>
-            Your shares don't need to add up to 100% — we'll scale them for you. Be careful about
-            what that actually means, though: scaling throws the rest of the field away, it doesn't
-            treat it as neutral. If you list the top eight and they come to 60%, you're asking how
-            you'd do at a tournament where those eight decks are the entire meta. Add the
-            <strong>Other</strong> bucket to stand in for everything you didn't list.
+            Your shares don't need to add up to 100%, since I scale them for you. Before you trust
+            the number, think about where the missing slice went. It gets dropped. So if you list the
+            top eight and they come to 60%, your answer describes a tournament where those eight
+            decks are the whole field and the other 40% never shows up. Put the <strong>Other</strong>
+            bucket in and that 40% becomes an opponent again.
         </p>
         <p>
-            <strong>Ties are a judgment call, not a fact.</strong> We're playing best-of-three, so a
-            tie usually works out as a loss for whoever needed the win. I default to ignoring ties
-            entirely, but Settings will let you count them as losses or as half a win instead. A
-            single matchup can swing three points between those three readings, so pick whichever
-            one matches the event you're prepping for.
+            How a tie counts is your call. In best-of-three, a tie hurts whoever needed the win. My
+            default throws ties out of the calculation entirely, though Settings will count them as
+            losses or give them half credit if you'd rather. One matchup can move three points
+            depending on which you pick, so choose based on the event you're getting ready for.
         </p>
         <p>
-            <strong>Regression to 50%</strong> is why a 3–0 matchup doesn't show up as 100%. Most
-            matchups in this data are thin — across all 130 decks the median pairing has all of two
-            decisive games — so we pull every matchup toward even by a prior worth <em>k</em>
-            pseudo-games: <code>(W + k/2) / (W + L + k)</code>. At the default <code>k = 20</code>
-            that 3–0 reads as 56%, while a 60–40 over 100 games barely budges. Drop <em>k</em> to 0
-            in Settings if you'd rather see Trainer Hill's raw numbers. This handles the empty
-            matchups for free, too: two thirds of all deck pairs have never actually played each
-            other, and with no evidence either way they sit at exactly 50%.
+            A 3–0 matchup won't show up as 100%, because I pull every matchup toward even before
+            using it. Most of what Trainer Hill has is thin. Across all 130 decks the median pairing
+            has two decisive games in it. So each matchup gets a prior worth <em>k</em> pseudo-games:
+            <code>(W + k/2) / (W + L + k)</code>. That 3–0 reads as 56% once <em>k</em> is 20, which
+            is the default. A 60–40 built on 100 games moves by less than a point. Set <em>k</em> to
+            0 in Settings and you'll see Trainer Hill's raw numbers. The same prior covers the pairs
+            with no games at all, and two thirds of all deck pairs have never played each other. With
+            nothing to go on they sit at 50%.
         </p>
         <p>
-            <strong>The interval is the honest part of the answer.</strong> That prior is a Beta
-            distribution, so every matchup carries a variance as well as a mean, and we add those up
-            across matchups to get a 95% interval. The table draws a rule wherever the data can
-            actually tell two decks apart — inside a group the ordering is noise, and the deck
-            sitting one row higher is not the better pick. Read the interval, not the decimal. One
-            caveat worth saying out loud: the interval covers the games that got played. It doesn't
-            cover your meta shares being wrong, which is usually the bigger risk.
+            That prior is a Beta distribution, so every matchup carries a variance next to its mean.
+            Add those up across a deck's matchups and you get the 95% interval in the table. When two
+            decks' intervals stop overlapping, I draw a rule between them, and that rule is the only
+            place the ranking tells you something. Inside one block the order is noise, and a deck one
+            row up isn't a better pick. The interval only knows about games that were played. Whether
+            your meta shares are any good is a separate question, and getting those wrong will cost
+            you more than sampling error will.
         </p>
         <p>
-            <strong>Your own deck</strong> is there for a brew that doesn't have a tournament record
-            yet. You give it a win rate into each deck in the field and tell me how much testing is
-            behind those numbers. An estimate backed by 30 games goes into the math as an 18–12
-            record, so it regresses toward 50% exactly like a real record does — an untested deck
-            can't just declare itself good. Give it a meta share and it becomes an opponent as well:
-            everything else then faces it at the complement of your numbers, since a matchup you win
-            60% of the time is one they win 40% of the time.
+            <strong>Your own deck</strong> handles a brew with no tournament record. Give it a win
+            rate into each deck in the field, then tell me how much testing sits behind those numbers.
+            An estimate backed by 30 games enters the math as an 18–12 record and regresses toward 50%
+            the same way a real record would, so typing 70% into everything won't get you to the top.
+            If you also give it a meta share, it starts playing the other side: every other deck faces
+            it at the complement of what you entered, because a matchup you win 60% of the time is one
+            they win 40% of the time.
         </p>
         <p>
-            Sample sizes are on display everywhere. A <span class="thin-flag">thin</span> label means
-            there are fewer than 20 games behind that matchup, so treat it as a hint about the
-            matchup rather than a measurement of it.
+            Sample sizes show up throughout the page. A <span class="thin-flag">thin</span> label
+            means fewer than 20 games went into that matchup. At that size you can read which way a
+            matchup leans and very little else.
         </p>
         <p class="muted">
             <a href="https://github.com/reillyowencooper/metagross-ev" target="_blank" rel="noopener">Source code on GitHub</a>

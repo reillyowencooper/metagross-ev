@@ -35,10 +35,10 @@ const CUSTOM = '__custom';  // reserved slug for the hand-entered deck
    same regression applies to an estimate as to a record, so a deck cannot climb
    the ranking on assertion alone. */
 const EVIDENCE = [
-    { n: 10, label: 'A guess' },
+    { n: 10, label: 'Just a guess' },
     { n: 30, label: 'Some testing' },
     { n: 100, label: 'Well tested' },
-    { n: 300, label: 'Heavily tested' },
+    { n: 300, label: 'Tested it to death' },
 ];
 /* Past this many decks the grid stops being readable long before it stops being
    possible: 130 decks is 16,900 cells and over a megabyte of markup, with
@@ -83,9 +83,9 @@ async function load() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         data = await res.json();
     } catch (err) {
-        el('snapshot').textContent = "Couldn't load the matchup data — try reloading?";
+        el('snapshot').textContent = "Couldn't load the matchup data. Try a reload?";
         el('deck-grid').innerHTML =
-            `<p class="empty-note">Couldn't fetch <code>data.json</code> (${err.message}). That's on me, not you — try a reload.</p>`;
+            `<p class="empty-note">Couldn't fetch <code>data.json</code> (${err.message}). Try a reload.</p>`;
         return;
     }
 
@@ -281,8 +281,8 @@ function computeResults() {
 
             /* Variance of a weighted mean of independent matchups. The shares
                are the user's own assumption, so they carry no uncertainty
-               here — that is what the sensitivity of the ranking to a share
-               is about, and a different question. */
+               here. How much the ranking moves when a share is wrong is a
+               separate question. */
             const variance = breakdown.reduce(
                 (s, b) => s + (b.weight ** 2) * b.variance, 0
             );
@@ -476,16 +476,15 @@ function updateShareTotal() {
     const held = state.selected.filter((s) => state.noField.has(s)).length;
     totalEl.classList.toggle('is-warn', total <= 0);
     if (total <= 0) {
-        totalEl.innerHTML = "Give at least one deck a share above 0% and we'll have something to work with.";
+        totalEl.innerHTML = "Give at least one deck a share above 0%.";
         return;
     }
 
     let text = `Shares total <strong>${fmtPct(total)}</strong>`;
     // A percent of rounding dust is not worth a lecture.
     if (Math.abs(total - 100) > 1) {
-        text += ` — we'll scale that to 100%, which throws the missing `
-             + `${fmtPct(Math.max(0, 100 - total))} of the field away rather than treating it `
-             + `as neutral.`;
+        text += `. I'll scale that to 100%, which drops the missing `
+             + `${fmtPct(Math.max(0, 100 - total))} of the field.`;
         // Only offer the bucket when it is not already doing the job.
         const hasOther = state.selected.includes('other') && !state.noField.has('other');
         text += hasOther
@@ -519,11 +518,11 @@ function renderCustom() {
     el('custom-roles').innerHTML = `
         <button type="button" class="field-pill${noRank ? '' : ' is-in'}"
                 data-crole="rank" aria-pressed="${!noRank}"
-                title="${noRank ? 'Not ranked. Click to rank it.' : 'Ranked in the results.'}">rank</button>
+                title="${noRank ? 'Not ranked. Click to rank it.' : 'Ranked in the results below.'}">rank</button>
         <button type="button" class="field-pill${noField ? '' : ' is-in'}"
                 data-crole="field" aria-pressed="${!noField}"
-                title="${noField ? 'Not an opponent. Click to add it to the field.'
-                                 : 'An opponent too. Others face it at the complement of your numbers.'}">field</button>`;
+                title="${noField ? 'Held out of the field. Click to put it in.'
+                                 : 'The other decks face it at the complement of your numbers.'}">field</button>`;
 
     // One row per deck already in play, so the estimates match the field.
     const opponents = state.selected.filter((slug) => !state.noField.has(slug));
@@ -556,7 +555,7 @@ function renderCustom() {
         `Each estimate goes into the math as ${n} games, so it regresses toward 50% `
       + `just like a real record does. A 60% call reads as `
       + `<strong>${fmtPct(((0.6 * n + state.k / 2) / (n + state.k)) * 100)}</strong> at this setting. `
-      + `Only bump the testing up if you've genuinely played the games.`;
+      + `Raise the testing level once you've played the games.`;
 }
 
 /* ---------- results ---------- */
@@ -575,8 +574,8 @@ function renderResults(results) {
 
     const groups = new Set(results.map((r) => r.tier)).size;
     const caption = groups > 1
-        ? `A rule separates groups the data can actually tell apart. Inside a group, the ordering is noise.`
-        : `Every deck here sits inside every other deck's interval, so the data can't really rank them.`;
+        ? `A rule separates groups the games can tell apart. Inside a group the order is noise.`
+        : `Every deck here sits inside every other deck's interval, so the games can't rank them.`;
 
     wrap.innerHTML = `<p class="table-caption">${caption}</p>
     <table class="data">
@@ -608,8 +607,8 @@ function resultRowHtml(r, i, spread) {
             <span class="result-deck-inner">
                 <span class="deck-icons">${iconsHtml(r.deck.icons)}</span>
                 ${escapeHtml(r.deck.name)}
-                ${r.isCustom ? '<span class="held-flag is-custom" title="Your own numbers, not a tournament record">estimate</span>' : ''}
-                ${r.inField ? '' : '<span class="held-flag" title="Ranked, but not part of the field">rank only</span>'}
+                ${r.isCustom ? '<span class="held-flag is-custom" title="Your own numbers, entered by hand">estimate</span>' : ''}
+                ${r.inField ? '' : '<span class="held-flag" title="Ranked, and held out of the field">rank only</span>'}
             </span>
         </td>
         <td class="num result-wr">${fmtPct(r.expected)}</td>
@@ -648,7 +647,7 @@ function breakdownHtml(r) {
     }).join('');
 
     return `<div class="breakdown">
-        <h4>${escapeHtml(r.deck.name)} — matchup by matchup</h4>
+        <h4>${escapeHtml(r.deck.name)}: matchup by matchup</h4>
         <table class="breakdown-table">
             <thead><tr>
                 <th>Opponent</th>
@@ -682,10 +681,10 @@ function renderMatrix(results) {
 
     if (results.length > MATRIX_MAX) {
         el('matrix').innerHTML =
-            `<p class="empty-note">${results.length} decks is too many to read as a grid —
-             that's ${(results.length ** 2).toLocaleString()} cells. Narrow it down to
-             ${MATRIX_MAX} or fewer, or click any row above for that deck's breakdown
-             instead.</p>`;
+            `<p class="empty-note">${results.length} decks makes
+             ${(results.length ** 2).toLocaleString()} cells, which is more grid than anyone can
+             read. Narrow it down to ${MATRIX_MAX} or fewer, or click any row above for that
+             deck's breakdown.</p>`;
         el('matrix-legend').innerHTML = '';
         return;
     }
@@ -753,7 +752,7 @@ function cellTooltip(rowSlug, colSlug) {
         <span class="tt-num">${m.raw === null
             ? "No games yet, so it sits at 50%."
             : `${fmtPct(m.raw)} raw · ${m.record} (W–L–T)`}</span>
-        ${m.n && m.n < THIN ? `<br><span class="tt-num">Only ${m.n} games behind this one — thin.</span>` : ''}`;
+        ${m.n && m.n < THIN ? `<br><span class="tt-num">Only ${m.n} games behind this one, so it's thin.</span>` : ''}`;
 }
 
 /* ---------- CSV + link ---------- */
@@ -874,9 +873,9 @@ function render() {
 
     el('shrink-label').textContent = state.k === 0 ? '· off' : `· k = ${state.k}`;
     el('shrink-hint').textContent = state.k === 0
-        ? "Trainer Hill's raw numbers — a 3–0 matchup reads as a clean 100%."
-        : `A 3–0 reads as ${fmtPct(((3 + state.k / 2) / (3 + state.k)) * 100)}; ` +
-          `a 60–40 over 100 games reads as ${fmtPct(((60 + state.k / 2) / (100 + state.k)) * 100)}.`;
+        ? "Trainer Hill's raw numbers, so a 3–0 matchup reads as 100%."
+        : `A 3–0 reads as ${fmtPct(((3 + state.k / 2) / (3 + state.k)) * 100)} at this setting. ` +
+          `Over 100 games, a 60–40 comes out at ${fmtPct(((60 + state.k / 2) / (100 + state.k)) * 100)}.`;
     el('tie-hint').textContent = `Win rate = ${TIE_MODES[state.tieMode].formula}.`;
     el('settings-summary').textContent =
         `${TIE_MODES[state.tieMode].label} · regression k = ${state.k}`;

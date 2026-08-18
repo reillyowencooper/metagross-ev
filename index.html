@@ -73,7 +73,6 @@
                        <strong>rank</strong> for a bucket like Other, which you cannot register.</p>
                 </div>
                 <div class="card-actions">
-                    <button type="button" class="btn" id="add-custom">Add your own deck</button>
                     <button type="button" class="btn btn-quiet" id="reset-shares">Reset to observed</button>
                     <button type="button" class="btn btn-quiet" id="even-shares">Even split</button>
                 </div>
@@ -82,6 +81,14 @@
             <div class="share-list" id="share-list"></div>
 
             <p class="share-total" id="share-total"></p>
+
+            <div class="custom-cta" id="custom-cta">
+                <button type="button" class="btn btn-primary" id="add-custom">
+                    <span class="btn-plus" aria-hidden="true">+</span>Add your own deck
+                </button>
+                <p>Playing something the data has never seen? Enter your own matchup
+                   numbers and rank your brew against this field.</p>
+            </div>
         </section>
 
         <!-- ---------- your own deck ---------- -->

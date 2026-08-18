@@ -505,7 +505,7 @@ function updateShareTotal() {
 function renderCustom() {
     const card = el('step-custom');
     const c = state.custom;
-    el('add-custom').hidden = !!c;
+    el('custom-cta').hidden = !!c;
     if (!c) { card.hidden = true; return; }
     card.hidden = false;
 
@@ -872,7 +872,6 @@ function render() {
     el('step-shares').hidden = !has;
     el('step-results').hidden = !has;
     el('step-settings').hidden = !has;
-    el('add-custom').parentElement.hidden = !has;
 
     el('shrink-label').textContent = state.k === 0 ? '· off' : `· k = ${state.k}`;
     el('shrink-hint').textContent = state.k === 0

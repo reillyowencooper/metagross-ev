@@ -18,6 +18,11 @@ There is no build step, no framework and no package manager. Do not add one.
 | `expected_win_rates.py` | Command-line version of the same math |
 | `.github/workflows/pages.yml` | Deploys the site to GitHub Pages |
 
+`MATRIX_MAX` in `app.js` caps the matchup grid at 24 decks. Past that the grid
+stops being readable well before it stops being possible: 130 decks is 16,900
+cells and over a megabyte of markup. Above the cap the page shows a note and
+points at the per-deck breakdown.
+
 ## Where the data comes from
 
 `data.json` is a snapshot of the Trainer Hill meta page. A separate private

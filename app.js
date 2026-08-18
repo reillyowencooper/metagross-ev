@@ -25,6 +25,10 @@ const state = {
 };
 
 const THIN = 20;          // games below which a matchup is flagged thin
+/* Past this many decks the grid stops being readable long before it stops being
+   possible: 130 decks is 16,900 cells and over a megabyte of markup, with
+   column labels too narrow to read. Show a note instead of a wall. */
+const MATRIX_MAX = 24;
 const Z = 1.96;           // normal quantile for a 95% interval
 
 /* A tie is not a fact, it is a choice. Pokémon TCG is best of three, so a tie
@@ -83,6 +87,7 @@ async function load() {
     }
 
     describeSnapshot();
+    el('preset-all').textContent = `All ${data.decks.length}`;
     restoreFromHash();
     renderDeckPicker();
     render();
@@ -381,10 +386,16 @@ function updateShareTotal() {
     }
 
     let text = `Shares total <strong>${fmtPct(total)}</strong>`;
-    if (Math.abs(total - 100) > 0.5) {
+    // A percent of rounding dust is not worth a lecture.
+    if (Math.abs(total - 100) > 1) {
         text += ` — the page scales this to 100%. That treats the missing `
              + `${fmtPct(Math.max(0, 100 - total))} of the field as though it does not exist, `
-             + `not as though it is neutral. Add <strong>Other</strong> to stand in for the rest.`;
+             + `not as though it is neutral.`;
+        // Only offer the bucket when it is not already doing the job.
+        const hasOther = state.selected.includes('other') && !state.noField.has('other');
+        text += hasOther
+            ? ` Raise <strong>Other</strong> to cover the rest.`
+            : ` Add <strong>Other</strong> to stand in for the rest.`;
     } else {
         text += '.';
     }
@@ -513,6 +524,16 @@ function renderMatrix(results) {
         return;
     }
     section.hidden = false;
+
+    if (results.length > MATRIX_MAX) {
+        el('matrix').innerHTML =
+            `<p class="empty-note">${results.length} decks is too many to read as a grid
+             (${(results.length ** 2).toLocaleString()} cells). Narrow the selection to
+             ${MATRIX_MAX} decks or fewer, or use the per-deck breakdown: click any row in
+             the results above.</p>`;
+        el('matrix-legend').innerHTML = '';
+        return;
+    }
 
     const order = results.map((r) => r.deck);
     const head = order.map((d) =>
@@ -739,14 +760,17 @@ function wire() {
 
     document.querySelectorAll('[data-preset]').forEach((btn) => {
         btn.addEventListener('click', () => {
-            const n = Number(btn.dataset.preset);
-            const top = [...state.decks]
+            const all = btn.dataset.preset === 'all';
+            const ranked = [...state.decks]
                 .filter((d) => d.slug !== 'other')     // a bucket, not a deck
-                .sort((a, b) => b.share - a.share)
-                .slice(0, n)
+                .sort((a, b) => b.share - a.share);
+            const top = (all ? ranked : ranked.slice(0, Number(btn.dataset.preset)))
                 .map((d) => d.slug);
-            // Other joins the field so the shares describe a whole meta, but it
-            // is not ranked, because nobody can register "Other".
+
+            /* Other joins the field so the shares describe a whole meta, but it
+               is not ranked, because nobody can register "Other". Every deck at
+               its observed share already totals 100%, so the whole-meta case
+               needs no remainder. */
             const other = state.bySlug.get('other');
             state.selected = other ? [...top, other.slug] : top;
             state.noRank.clear();

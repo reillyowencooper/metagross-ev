@@ -22,7 +22,13 @@ Your shares do not need to total 100%. The page scales them. Be careful what
 that means: it drops the rest of the field, and it does not treat the rest as
 neutral. Add the **Other** bucket to stand in for every deck you did not list.
 The **Top 8**, **Top 12** and **Top 16** buttons do this for you, and they give
-Other whatever share the listed decks leave over.
+Other whatever share the listed decks leave over. **All 130** selects every deck
+instead. Every deck at its observed share already totals 100%, so that view is
+the whole meta with nothing left over.
+
+Expect the full-meta ranking to put small-sample decks near the top. A deck with
+200 games can look strong on very little evidence. This is what the intervals
+and the thin labels are for: read them before you believe a rank.
 
 ### Two roles per deck
 

@@ -12,25 +12,49 @@ them a different weight.
 
 The page has three steps.
 
-1. **Choose decks.** Select the decks that you expect to play against. These
-   decks are also the decks that the page ranks.
+1. **Choose decks.** Select the decks that you expect to play against.
 2. **Set the expected meta share.** Each deck starts at its current usage on
    Trainer Hill. Type a new percentage for any deck.
-3. **Read the results.** Click a deck to see each of its matchups.
+3. **Read the results.** Read the interval, not the decimal. Click a deck to see
+   each of its matchups.
 
-Your shares do not need to total 100%. The page divides by the total that you
-enter. The result is always a win rate against the field that you describe.
+Your shares do not need to total 100%. The page scales them. Be careful what
+that means: it drops the rest of the field, and it does not treat the rest as
+neutral. Add the **Other** bucket to stand in for every deck you did not list.
+The **Top 8**, **Top 12** and **Top 16** buttons do this for you, and they give
+Other whatever share the listed decks leave over.
+
+### Two roles per deck
+
+Every deck has two roles, and you can switch either one off.
+
+| Role | What it means | Turn it off when |
+|---|---|---|
+| **rank** | The deck appears in the results | It is a bucket like Other, which nobody can register |
+| **field** | The deck is an opponent | You want to test a deck nobody plays yet |
+
+Turning off **field** is how you answer the useful question: *how does my rogue
+deck do against the top eight?* The deck gets ranked against that field without
+becoming part of it.
 
 Use **Copy link** to save your setup. The link holds the decks, the shares and
 the settings.
 
 ## The math
 
-Win rate ignores ties:
+### A tie is a choice, not a fact
 
-```
-win rate = wins / (wins + losses)
-```
+This format is best of three, so a tie often works out as a loss for whoever
+needed the win. Settings offers all three readings:
+
+| Setting | Win rate | 
+|---|---|
+| Ignore ties (default) | `W / (W + L)` |
+| Ties count as losses | `W / (W + L + T)` |
+| Ties count as half a win | `(W + T/2) / (W + L + T)` |
+
+One matchup can move three points between them. Pick the reading that matches
+your event.
 
 The expected win rate for a deck is the average of its matchups. Each matchup
 gets the weight of the opponent's meta share:
@@ -62,8 +86,21 @@ numbers.
 This also solves the empty matchups. Two thirds of all deck pairs have no
 recorded games. With no evidence, they sit at exactly 50%.
 
-The page marks a matchup as **thin** below 20 decisive games. Treat a thin
+The page marks a matchup as **thin** below 20 counted games. Treat a thin
 matchup as a hint, not as a measurement.
+
+### The interval is the honest part of the answer
+
+That prior is a Beta distribution, so every matchup carries a variance as well
+as a mean. The page adds those up across the matchups, weighted by your shares,
+and reports a 95% interval.
+
+A rule in the results table separates groups that the data can tell apart.
+Inside a group the order is noise, and a deck one place higher is **not** a
+better choice. Read the interval, not the decimal.
+
+The interval covers the games played. It does not cover your shares being wrong,
+which is usually the larger risk.
 
 ## Refresh the data
 
@@ -93,8 +130,12 @@ dragapult-ex,0.16
 dragapult-blaziken,0.14
 ```
 
-Add `-k 0` for raw win rates. Add `--no-mirror` to remove mirror matches from
-the field. Add `-o results.csv` to save the table.
+Add `-k 0` for raw win rates. Add `--ties losses` or `--ties half` to change the
+tie rule. Add `--no-mirror` to remove mirror matches from the field. Add
+`-o results.csv` to save the table.
+
+The CLI prints the same intervals and the same groups as the page, and a rule
+separates the groups there too.
 
 The script also accepts a matchup CSV that you export from the Trainer Hill
 meta page.

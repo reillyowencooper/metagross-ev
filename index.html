@@ -27,8 +27,9 @@
             <div class="card-head">
                 <div>
                     <h2><span class="step-num">1</span> Choose decks</h2>
-                    <p class="card-sub">Select the decks that you expect to play against. The page ranks
-                       these decks, and it also uses them as the field.</p>
+                    <p class="card-sub">Select the decks that you expect to play against. By default the page
+                       ranks each one and also treats it as an opponent. You can switch either
+                       role off in the next step.</p>
                 </div>
                 <div class="card-actions">
                     <button type="button" class="btn" data-preset="8">Top 8</button>
@@ -63,8 +64,12 @@
             <div class="card-head">
                 <div>
                     <h2><span class="step-num">2</span> Set expected meta share</h2>
-                    <p class="card-sub">Each deck starts at its current usage on Trainer Hill.
-                       Type a new percentage for any deck.</p>
+                    <p class="card-sub">Each deck starts at its current usage on Trainer Hill. Type a new
+                       percentage for any deck. Every deck has two roles, and you can switch
+                       either off: <strong>rank</strong> puts it in the results,
+                       <strong>field</strong> makes it an opponent. Turn off
+                       <strong>field</strong> to test a deck nobody plays yet. Turn off
+                       <strong>rank</strong> for a bucket like Other, which you cannot register.</p>
                 </div>
                 <div class="card-actions">
                     <button type="button" class="btn btn-quiet" id="reset-shares">Reset to observed</button>
@@ -82,10 +87,12 @@
             <div class="card-head">
                 <div>
                     <h2><span class="step-num">3</span> Expected win rates</h2>
-                    <p class="card-sub">Each deck's win rate against the field that you describe above.
-                       Click a deck to see each of its matchups.</p>
+                    <p class="card-sub">Each deck's win rate against the field that you describe above. Read the
+                       interval, not the decimal: a gap smaller than the intervals is not a
+                       difference. Click a deck to see each of its matchups.</p>
                 </div>
                 <div class="card-actions">
+                    <span class="settings-summary" id="settings-summary"></span>
                     <button type="button" class="btn btn-quiet" id="copy-link">Copy link</button>
                     <button type="button" class="btn btn-quiet" id="download-csv">Download CSV</button>
                 </div>
@@ -98,6 +105,15 @@
         <section class="card card-settings" id="step-settings" hidden>
             <h2>Settings</h2>
             <div class="settings-row">
+                <label class="field">
+                    <span>How a tie counts</span>
+                    <select id="tie-mode">
+                        <option value="ignore">Ignore ties</option>
+                        <option value="losses">Ties count as losses</option>
+                        <option value="half">Ties count as half a win</option>
+                    </select>
+                    <small id="tie-hint"></small>
+                </label>
                 <label class="field field-slider">
                     <span>Regression to 50% <em id="shrink-label"></em></span>
                     <input type="range" id="shrink" min="0" max="60" step="2" value="20">
@@ -136,32 +152,47 @@
         <h2>How this works</h2>
         <p>
             Matchup data comes from <a href="https://www.trainerhill.com/meta?game=PTCG" target="_blank" rel="noopener">Trainer Hill</a>.
-            The filter at the top of the page shows the window. Win rate <strong>ignores ties</strong>:
-            <code>wins / (wins + losses)</code>. Trainer Hill collects and publishes the tournament
-            data. This page only gives it a different weight.
+            The filter at the top of the page shows the window. Trainer Hill collects and
+            publishes the tournament data. This page only gives it a different weight.
         </p>
         <p>
             The <strong>expected win rate</strong> for a deck is the average of its matchups. Each
             matchup gets the weight of that opponent's meta share. The page then divides by the total
             share that you enter. An example: the field is 40% Dragapult and 60% Gardevoir, and your
             deck wins 45% against Dragapult and 55% against Gardevoir. The expected win rate is
-            <code>(0.4 × 45 + 0.6 × 55) / 1.0 = 51%</code>. Your shares do not need to total 100%.
+            <code>(0.4 × 45 + 0.6 × 55) / 1.0 = 51%</code>.
+        </p>
+        <p>
+            Your shares do not need to total 100%. The page scales them. Be careful what that means:
+            it drops the rest of the field, and it does not treat the rest as neutral. Add the
+            <strong>Other</strong> bucket to stand in for every deck you did not list.
+        </p>
+        <p>
+            <strong>Ties are a choice, not a fact.</strong> This format is best of three, so a tie
+            often works out as a loss for whoever needed the win. Settings offers all three readings:
+            ignore ties, count them as losses, or count them as half a win. One matchup can move
+            three points between them, so pick the one that matches your event.
         </p>
         <p>
             <strong>Regression to 50%</strong> is why a 3–0 matchup does not show as 100%. Most
             matchups have very few games. Across all 130 decks, the median matchup has only two
-            decisive games. The page therefore pulls each matchup toward even by a prior worth
-            <em>k</em> pseudo games: <code>(wins + k/2) / (wins + losses + k)</code>. At the default
-            <code>k = 20</code>, a 3–0 record reads as 56%. A 60–40 record over 100 games hardly
-            moves. Set <em>k</em> to 0 in Settings to see the raw numbers.
+            games. The page therefore pulls each matchup toward even by a prior worth <em>k</em>
+            pseudo games: <code>(W + k/2) / (W + L + k)</code>. At the default <code>k = 20</code>, a
+            3–0 record reads as 56%. A 60–40 record over 100 games hardly moves. Set <em>k</em> to 0
+            in Settings to see the raw numbers. This also solves the empty matchups: two thirds of
+            all deck pairs have no recorded games, and with no evidence they sit at exactly 50%.
         </p>
         <p>
-            This also solves the empty matchups. Two thirds of all deck pairs have no recorded games.
-            With no evidence, they sit at exactly 50%.
+            <strong>The interval is the honest part of the answer.</strong> That same prior is a Beta
+            distribution, so each matchup carries a variance as well as a mean. The page adds those
+            up across the matchups, weighted by your shares, and reports a 95% interval. A rule in
+            the table separates groups that the data can tell apart. Inside a group, the order is
+            noise, and a deck one place higher is not a better choice. The interval covers the games
+            played. It does not cover your shares being wrong, which is usually the larger risk.
         </p>
         <p>
             The page shows the sample size everywhere. A <span class="thin-flag">thin</span> label
-            marks a matchup below 20 decisive games. Treat a thin matchup as a hint, not as a
+            marks a matchup below 20 counted games. Treat a thin matchup as a hint, not as a
             measurement.
         </p>
         <p class="muted">

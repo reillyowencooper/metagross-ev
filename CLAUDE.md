@@ -34,12 +34,19 @@ filter, change it in the private repository.
 
 ## Facts that the code depends on
 
-- Win rate ignores ties: `wins / (wins + losses)`.
+- A tie is a choice. `TIE_MODES` in `app.js` and `expected_win_rates.py` hold the
+  three readings, each as the two sides of a Beta posterior. The snapshot stores
+  wins, losses and ties separately, so no refetch is needed to switch.
+- A deck has two independent roles, `noRank` and `noField`. One flag cannot
+  express both cases: Other belongs in the field but is not ranked, and a rogue
+  deck is ranked but held out of the field.
 - The grid is symmetric, so `data.json` stores one triangle. `app.js` mirrors it
   on load.
 - The grid is sparse. About one third of deck pairs have games. The median pair
   has two decisive games.
-- `other` is a bucket, not a deck. The deck presets exclude it.
+- `other` is a bucket, not a deck. The presets put it in the field so the shares
+  describe a whole meta, give it whatever share the listed decks leave over, and
+  hold it out of the ranking.
 - A few sprite URLs return 404. This is known and accepted.
 
 ## The math
@@ -54,6 +61,20 @@ The default is `k = 20`. A pair with no games lands on exactly 50%.
 
 The expected win rate is the share-weighted mean of the matchups, divided by the
 total share.
+
+The prior doubles as the uncertainty. Beta(alpha, beta) has variance
+`alpha*beta / ((alpha+beta)^2 * (alpha+beta+1))`, and the weighted mean's
+variance is `sum(weight^2 * variance)`. That gives the 95% interval, so the
+regression and the interval always tell the same story. Beta(0, 0) is improper,
+which happens only at `k = 0` with no games; both implementations fall back to
+`1/12`, the variance of a flat prior, rather than report a false zero.
+
+Interval groups: walk down the ranking, and keep adding decks while their
+interval still reaches the group leader's lower bound. Inside a group the order
+is noise, and the table draws a rule where a new group starts.
+
+Shares carry **no** uncertainty in the interval. They are the user's assumption,
+not a measurement. A sensitivity view is the right home for that question.
 
 **The two implementations must agree.** If you change one, change the other.
 To check parity, run the CLI and the page on the same decks and shares. They

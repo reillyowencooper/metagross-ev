@@ -564,3 +564,115 @@ footer .muted { color: var(--muted); font-size: 12px; }
     table.data thead th.bar-head { display: none; }
     .selected-count { margin-left: 0; }
 }
+
+/* ---------- confidence interval, tiers, field toggle ---------- */
+
+.table-caption {
+    margin: 0 0 10px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.settings-summary {
+    align-self: center;
+    margin-right: 4px;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-variant-numeric: tabular-nums;
+}
+
+table.data tbody td.result-ci {
+    color: var(--muted);
+    font-size: 12.5px;
+    white-space: nowrap;
+}
+
+/* A rule where the data can finally tell two decks apart. */
+table.data tbody tr.tier-start td { border-top: 1px solid var(--muted-soft); }
+
+/* The interval sits behind the point estimate: recessive, but the wider mark. */
+.bar-whisker {
+    display: block;
+    position: absolute;
+    top: 8px;
+    height: 2px;
+    background: var(--muted-soft);
+    border-radius: 1px;
+}
+.bar-whisker::before,
+.bar-whisker::after {
+    content: "";
+    position: absolute;
+    top: -3px;
+    width: 1px;
+    height: 8px;
+    background: var(--muted-soft);
+}
+.bar-whisker::before { left: 0; }
+.bar-whisker::after { right: 0; }
+.bar-fill { z-index: 1; }
+
+/* Held out of the field: still ranked, visibly not part of the meta. */
+.share-row.is-out { border-style: dashed; background: var(--border-soft); }
+.share-row.is-out input { color: var(--muted-soft); background: transparent; }
+
+.field-pill {
+    flex: none;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-card);
+    font-family: inherit;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.12s, background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.field-pill:hover { border-color: var(--muted-soft); }
+.field-pill:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* Both roles are normally on, so the on state stays quiet rather than shouting
+   the default. The off state is struck through, which reads the same way in
+   every language and does not rely on color to carry the meaning. */
+.field-pill.is-in { color: var(--muted); }
+.field-pill.is-in:hover { color: var(--fg-soft); }
+.field-pill:not(.is-in) {
+    border-style: dashed;
+    color: var(--muted-soft);
+    text-decoration: line-through;
+}
+.field-pill:not(.is-in):hover { color: var(--muted); }
+
+.held-flag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--muted);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    vertical-align: 1px;
+}
+
+.share-list { grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); }
+.role-pills { display: flex; flex: none; gap: 3px; }
+.share-row .deck-chip-name { color: var(--fg); }
+a.deck-chip-name:hover { color: var(--accent); text-decoration: underline; }
+
+@media (max-width: 640px) {
+    table.data thead th.result-ci-head,
+    table.data tbody td.result-ci { display: none; }
+}

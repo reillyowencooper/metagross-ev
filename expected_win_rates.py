@@ -26,6 +26,7 @@ you enter is normalized.
 
 Usage:
     python expected_win_rates.py data.json meta_shares.csv
+    python expected_win_rates.py data.json meta_shares.csv --ties losses
     python expected_win_rates.py matchups.csv meta_shares.csv --shrink 0
     python expected_win_rates.py data.json meta_shares.csv -o results.csv
 """
@@ -33,10 +34,33 @@ Usage:
 import argparse
 import csv
 import json
+import math
 import sys
-from collections import defaultdict
 
-THIN = 20  # decisive games below which a matchup is worth flagging
+THIN = 20   # counted games below which a matchup is worth flagging
+Z = 1.96    # normal quantile for a 95% interval
+
+# Each entry turns a raw record into the two sides of a Beta posterior.
+TIE_MODES = {
+    "ignore": {
+        "formula": "W / (W + L)",
+        "alpha": lambda w, l, t, k: w + k / 2,
+        "beta": lambda w, l, t, k: l + k / 2,
+        "counts_ties": False,
+    },
+    "losses": {
+        "formula": "W / (W + L + T)",
+        "alpha": lambda w, l, t, k: w + k / 2,
+        "beta": lambda w, l, t, k: l + t + k / 2,
+        "counts_ties": True,
+    },
+    "half": {
+        "formula": "(W + T/2) / (W + L + T)",
+        "alpha": lambda w, l, t, k: w + t / 2 + k / 2,
+        "beta": lambda w, l, t, k: l + t / 2 + k / 2,
+        "counts_ties": True,
+    },
+}
 
 
 def load_matchups(path: str) -> dict:
@@ -51,10 +75,10 @@ def load_snapshot(path: str) -> dict:
         data = json.load(f)
     slugs = [d["slug"] for d in data["decks"]]
     out = {}
-    for i, j, wins, losses, _ties in data["matchups"]:
-        out[(slugs[i], slugs[j])] = (wins, losses)
+    for i, j, wins, losses, ties in data["matchups"]:
+        out[(slugs[i], slugs[j])] = (wins, losses, ties)
         if i != j:
-            out[(slugs[j], slugs[i])] = (losses, wins)
+            out[(slugs[j], slugs[i])] = (losses, wins, ties)
     return out
 
 
@@ -70,7 +94,8 @@ def load_csv(path: str) -> dict:
                  f"Trainer Hill matchup CSV, or use a data.json snapshot.")
     out = {}
     for r in rows:
-        out[(r["deck1"], r["deck2"])] = (int(r["wins"]), int(r["losses"]))
+        ties = int(r.get("ties") or 0)
+        out[(r["deck1"], r["deck2"])] = (int(r["wins"]), int(r["losses"]), ties)
     return out
 
 
@@ -89,17 +114,30 @@ def load_shares(path: str) -> dict:
     return shares
 
 
-def win_rate(matchups: dict, deck: str, opponent: str, k: float) -> tuple:
-    """Regressed win rate plus the decisive-game count behind it."""
-    wins, losses = matchups.get((deck, opponent), (0, 0))
-    decisive = wins + losses
-    if decisive + k == 0:
-        return 50.0, 0
-    return ((wins + k / 2) / (decisive + k)) * 100, decisive
+def win_rate(matchups: dict, deck: str, opponent: str, k: float,
+             mode: str = "ignore") -> tuple:
+    """Regressed win rate, its variance, and the games the tie rule counts."""
+    wins, losses, ties = matchups.get((deck, opponent), (0, 0, 0))
+    rule = TIE_MODES[mode]
+
+    alpha = rule["alpha"](wins, losses, ties, k)
+    beta = rule["beta"](wins, losses, ties, k)
+    total = alpha + beta
+
+    n = wins + losses + (ties if rule["counts_ties"] else 0)
+
+    # Beta(0, 0) is improper, which only happens at k = 0 with no games. Fall
+    # back to the variance of a flat prior rather than report a false zero.
+    variance = ((alpha * beta) / (total * total * (total + 1))
+                if total > 0 else 1 / 12)
+
+    wr = (alpha / total) * 100 if total > 0 else 50.0
+    return wr, variance, n
 
 
 def expected_win_rates(matchups: dict, shares: dict, k: float,
-                       include_mirror: bool = True) -> list:
+                       include_mirror: bool = True,
+                       mode: str = "ignore") -> list:
     total = sum(shares.values())
     if total <= 0:
         sys.exit("Total meta share is zero -- nothing to weight against.")
@@ -112,23 +150,47 @@ def expected_win_rates(matchups: dict, shares: dict, k: float,
         if weight <= 0:
             continue
         expected = 0.0
+        variance = 0.0
         games = 0
         thin = 0
         for opponent, share in opponents.items():
-            wr, n = win_rate(matchups, deck, opponent, k)
-            expected += (share / weight) * wr
+            wr, var, n = win_rate(matchups, deck, opponent, k, mode)
+            w = share / weight
+            expected += w * wr
+            # Variance of a weighted mean of independent matchups. The shares
+            # are the caller's assumption, so they carry no uncertainty here.
+            variance += (w ** 2) * var
             games += n
             if n < THIN:
                 thin += 1
+        margin = Z * math.sqrt(variance) * 100
         results.append({
             "deck_name": deck,
             "expected_win_rate": round(expected, 2),
+            "ci_low": round(max(0.0, expected - margin), 2),
+            "ci_high": round(min(100.0, expected + margin), 2),
             "share_of_field": round(100 * shares[deck] / total, 1),
-            "decisive_games": games,
+            "games": games,
             "thin_matchups": thin,
         })
     results.sort(key=lambda r: -r["expected_win_rate"])
+    assign_groups(results)
     return results
+
+
+def assign_groups(results: list) -> None:
+    """Group decks the data cannot tell apart.
+
+    Walk down the ranking and keep adding decks while their interval still
+    reaches the group leader's lower bound. Inside a group the order is noise.
+    """
+    group = 0
+    floor = float("inf")
+    for r in results:
+        if r["ci_high"] < floor:
+            group += 1
+            floor = r["ci_low"]
+        r["group"] = group
 
 
 def main() -> None:
@@ -139,6 +201,8 @@ def main() -> None:
     p.add_argument("-k", "--shrink", type=float, default=20.0,
                    help="regression strength in pseudo decisive games "
                         "(default: 20; 0 for raw Trainer Hill rates)")
+    p.add_argument("--ties", choices=sorted(TIE_MODES), default="ignore",
+                   help="how a tie counts (default: ignore)")
     p.add_argument("--no-mirror", action="store_true",
                    help="exclude mirror matches from the field")
     args = p.parse_args()
@@ -153,19 +217,32 @@ def main() -> None:
               f"these sits at 50%.", file=sys.stderr)
 
     results = expected_win_rates(matchups, shares, args.shrink,
-                                 include_mirror=not args.no_mirror)
+                                 include_mirror=not args.no_mirror,
+                                 mode=args.ties)
 
     total = sum(shares.values())
-    print(f"Field: {len(shares)} decks, shares total {total:.2f} "
-          f"(normalized) · regression k = {args.shrink:g}\n", file=sys.stderr)
+    print(f"Field: {len(shares)} decks, shares total {total:.2f} (normalized)\n"
+          f"Win rate: {TIE_MODES[args.ties]['formula']} · regression k = "
+          f"{args.shrink:g}\n", file=sys.stderr)
 
-    header = f"{'deck_name':30s} {'exp_wr':>7s} {'share':>7s} {'games':>7s} {'thin':>5s}"
+    header = (f"{'deck_name':30s} {'exp_wr':>7s} {'95% interval':>16s} "
+              f"{'share':>7s} {'games':>7s} {'thin':>5s}")
     print(header)
     print("-" * len(header))
+    last_group = None
     for r in results:
+        if last_group is not None and r["group"] != last_group:
+            print("-" * len(header))   # the data can tell these apart
+        last_group = r["group"]
+        interval = f"{r['ci_low']:.1f} - {r['ci_high']:.1f}"
         print(f"{r['deck_name']:30s} {r['expected_win_rate']:6.2f}% "
-              f"{r['share_of_field']:6.1f}% {r['decisive_games']:7d} "
-              f"{r['thin_matchups']:5d}")
+              f"{interval:>16s} {r['share_of_field']:6.1f}% "
+              f"{r['games']:7d} {r['thin_matchups']:5d}")
+
+    groups = results[-1]["group"] if results else 0
+    print(f"\nA rule separates groups the data can tell apart. "
+          f"{groups} group(s). Inside a group the order is noise.",
+          file=sys.stderr)
 
     if args.output:
         with open(args.output, "w", newline="") as f:

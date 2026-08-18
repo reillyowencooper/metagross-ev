@@ -9,7 +9,14 @@ const state = {
     grid: null,           // grid[i][j] = {wins, losses, ties} from i's side
     selected: [],         // slugs, in selection order
     shares: new Map(),    // slug -> percent as typed by the user
-    k: 20,                // regression strength, in pseudo decisive games
+    /* Two independent roles. A deck is normally both ranked and part of the
+       field. The Other bucket belongs in the field but cannot be played, so it
+       is not ranked. A deck nobody plays yet is the reverse: rank it, keep it
+       out of the field. One flag could not say both. */
+    noRank: new Set(),
+    noField: new Set(),
+    k: 20,                // regression strength, in pseudo games
+    tieMode: 'ignore',    // how a tie counts: ignore | losses | half
     includeMirror: true,
     showMatrix: true,
     openDeck: null,
@@ -17,7 +24,33 @@ const state = {
     cutoff: 0.002,
 };
 
-const THIN = 20;          // decisive games below which a matchup is flagged thin
+const THIN = 20;          // games below which a matchup is flagged thin
+const Z = 1.96;           // normal quantile for a 95% interval
+
+/* A tie is not a fact, it is a choice. Pokémon TCG is best of three, so a tie
+   often works out as a loss for whoever needed the win. The snapshot stores
+   wins, losses and ties separately, so all three readings are available here. */
+const TIE_MODES = {
+    ignore: {
+        label: 'Ignore ties',
+        formula: 'W / (W + L)',
+        // Prior of k pseudo games, split evenly, added to each side.
+        alpha: (w, l, t, k) => w + k / 2,
+        beta: (w, l, t, k) => l + k / 2,
+    },
+    losses: {
+        label: 'Ties count as losses',
+        formula: 'W / (W + L + T)',
+        alpha: (w, l, t, k) => w + k / 2,
+        beta: (w, l, t, k) => l + t + k / 2,
+    },
+    half: {
+        label: 'Ties count as half a win',
+        formula: '(W + T/2) / (W + L + T)',
+        alpha: (w, l, t, k) => w + t / 2 + k / 2,
+        beta: (w, l, t, k) => l + t / 2 + k / 2,
+    },
+};
 
 const el = (id) => document.getElementById(id);
 const fmtPct = (x, dp = 1) => `${x.toFixed(dp)}%`;
@@ -72,33 +105,47 @@ function describeSnapshot() {
 
 /* ---------- matchup math ---------- */
 
-/* Shrink a matchup toward 50% with a Beta(k/2, k/2) prior: k is worth k extra
-   decisive games split evenly. A pairing with no games lands on exactly 50%,
-   which is also how missing matchups are handled. */
-function shrunkWinRate(i, j, k) {
+/* One matchup, read through the current tie rule and regressed toward 50%.
+
+   The regression is a Beta(k/2, k/2) prior: k pseudo games split evenly. Its
+   posterior mean is the win rate, and its posterior variance is where the
+   interval further down comes from, so the two always tell the same story.
+   A pair with no games lands on exactly 50% with a wide interval, which is
+   also how a missing matchup is handled. */
+function matchup(i, j) {
     const m = state.grid[i][j];
-    const wins = m ? m.wins : 0;
-    const losses = m ? m.losses : 0;
-    const decisive = wins + losses;
-    if (decisive + k === 0) return 50;
-    return ((wins + k / 2) / (decisive + k)) * 100;
+    const w = m ? m.wins : 0;
+    const l = m ? m.losses : 0;
+    const t = m ? m.ties : 0;
+    const mode = TIE_MODES[state.tieMode];
+
+    const alpha = mode.alpha(w, l, t, state.k);
+    const beta = mode.beta(w, l, t, state.k);
+    const total = alpha + beta;
+
+    // Games the current tie rule actually counts.
+    const n = state.tieMode === 'ignore' ? w + l : w + l + t;
+
+    // Beta(0, 0) is improper, which only happens at k = 0 with no games. Fall
+    // back to the variance of a flat prior rather than report a false zero.
+    const variance = total > 0
+        ? (alpha * beta) / (total * total * (total + 1))
+        : 1 / 12;
+
+    return {
+        wr: total > 0 ? (alpha / total) * 100 : 50,
+        raw: n > 0 ? (mode.alpha(w, l, t, 0) / (mode.alpha(w, l, t, 0) + mode.beta(w, l, t, 0))) * 100 : null,
+        variance,
+        n,
+        record: m ? `${w}–${l}–${t}` : null,
+    };
 }
 
-function rawWinRate(i, j) {
-    const m = state.grid[i][j];
-    if (!m || m.wins + m.losses === 0) return null;
-    return (m.wins / (m.wins + m.losses)) * 100;
-}
-
-function decisiveGames(i, j) {
-    const m = state.grid[i][j];
-    return m ? m.wins + m.losses : 0;
-}
-
-/* Field the selected decks are measured against: each selected deck weighted by
-   the share the user typed, normalized so the result reads as a win rate. */
+/* The field: every selected deck the user left in it, weighted by the share
+   they typed and normalized so the answer reads as a win rate. */
 function buildField() {
     const rows = state.selected
+        .filter((slug) => !state.noField.has(slug))
         .map((slug) => ({ slug, deck: state.bySlug.get(slug), share: Number(state.shares.get(slug)) || 0 }))
         .filter((r) => r.deck && r.share > 0);
     const total = rows.reduce((s, r) => s + r.share, 0);
@@ -109,7 +156,8 @@ function computeResults() {
     const { rows, total } = buildField();
     if (!rows.length || total <= 0) return [];
 
-    return state.selected
+    const results = state.selected
+        .filter((slug) => !state.noRank.has(slug))
         .map((slug) => state.bySlug.get(slug))
         .filter(Boolean)
         .map((deck) => {
@@ -118,36 +166,70 @@ function computeResults() {
             );
             const weight = opponents.reduce((s, r) => s + r.share, 0);
             const breakdown = opponents.map((r) => {
-                const j = r.deck.index;
+                const stats = matchup(deck.index, r.deck.index);
                 return {
                     slug: r.slug,
                     name: r.deck.name,
-                    icons: r.deck.icons,
                     share: r.share,
                     weight: weight > 0 ? r.share / weight : 0,
-                    wr: shrunkWinRate(deck.index, j, state.k),
-                    raw: rawWinRate(deck.index, j),
-                    n: decisiveGames(deck.index, j),
                     isMirror: r.slug === deck.slug,
+                    ...stats,
                 };
             });
+
             const expected = weight > 0
                 ? breakdown.reduce((s, b) => s + b.weight * b.wr, 0)
                 : 50;
-            const games = breakdown.reduce((s, b) => s + b.n, 0);
-            const thin = breakdown.filter((b) => b.n < THIN).length;
+
+            /* Variance of a weighted mean of independent matchups. The shares
+               are the user's own assumption, so they carry no uncertainty
+               here — that is what the sensitivity of the ranking to a share
+               is about, and a different question. */
+            const variance = breakdown.reduce(
+                (s, b) => s + (b.weight ** 2) * b.variance, 0
+            );
+            const se = Math.sqrt(variance) * 100;
+
             breakdown.sort((a, b) => b.share - a.share);
             return {
                 deck,
                 expected,
-                fieldWeight: weight,
-                shareOfField: total > 0 ? (Number(state.shares.get(deck.slug)) || 0) / total : 0,
-                games,
-                thin,
+                se,
+                ciLow: Math.max(0, expected - Z * se),
+                ciHigh: Math.min(100, expected + Z * se),
+                inField: !state.noField.has(deck.slug),
+                shareOfField: total > 0 && !state.noField.has(deck.slug)
+                    ? (Number(state.shares.get(deck.slug)) || 0) / total : 0,
+                games: breakdown.reduce((s, b) => s + b.n, 0),
+                thin: breakdown.filter((b) => b.n < THIN).length,
                 breakdown,
             };
         })
         .sort((a, b) => b.expected - a.expected);
+
+    assignTiers(results);
+    return results;
+}
+
+/* Group decks that the data cannot tell apart. Walk down the ranking, and keep
+   adding decks to the current group while their interval still reaches the
+   group leader's lower bound. A new group starts at the first deck that clears
+   it. Two decks in one group are not evidence of an order. */
+function assignTiers(results) {
+    let tier = 0;
+    let floor = Infinity;
+    for (const r of results) {
+        if (r.ciHigh < floor) {
+            tier += 1;
+            floor = r.ciLow;
+            r.tierStart = tier > 1;
+        } else {
+            r.tierStart = false;
+        }
+        r.tier = tier;
+    }
+    const sizes = results.reduce((m, r) => m.set(r.tier, (m.get(r.tier) || 0) + 1), new Map());
+    results.forEach((r) => { r.tierSize = sizes.get(r.tier); });
 }
 
 /* ---------- color scale ---------- */
@@ -210,6 +292,15 @@ function iconsHtml(icons, lazy = false) {
         .map((src) => `<img src="${src}" alt=""${lazy ? ' loading="lazy"' : ''}>`).join('');
 }
 
+function deckLink(deck) {
+    const f = state.data.filter;
+    const q = new URLSearchParams({
+        game: f.game, players: f.players,
+        start_date: f.start_date, end_date: f.end_date,
+    });
+    return `https://www.trainerhill.com/decklist/${deck.slug}?${q}`;
+}
+
 /* ---------- shares ---------- */
 
 /* Prefill a newly selected deck with its observed usage, so the shares start as
@@ -221,46 +312,86 @@ function observedPercent(slug) {
 }
 
 function resetShares(mode) {
-    if (mode === 'even' && state.selected.length) {
-        const each = Math.round((100 / state.selected.length) * 10) / 10;
-        state.selected.forEach((s) => state.shares.set(s, each));
-    } else {
-        state.selected.forEach((s) => state.shares.set(s, observedPercent(s)));
+    const inField = state.selected.filter((s) => !state.noField.has(s));
+    if (mode === 'even' && inField.length) {
+        const each = Math.round((100 / inField.length) * 10) / 10;
+        inField.forEach((s) => state.shares.set(s, each));
+        return;
     }
+    state.selected.forEach((s) => state.shares.set(s, observedPercent(s)));
+    absorbRemainder();
+}
+
+/* Point the Other bucket at whatever share the listed decks leave over, so the
+   field adds up to a whole meta rather than only its head. */
+function absorbRemainder() {
+    if (!state.selected.includes('other') || state.noField.has('other')) return;
+    const rest = state.selected
+        .filter((s) => s !== 'other' && !state.noField.has(s))
+        .reduce((sum, s) => sum + (Number(state.shares.get(s)) || 0), 0);
+    state.shares.set('other', Math.round(Math.max(0, 100 - rest) * 10) / 10);
 }
 
 function renderShares() {
     const wrap = el('share-list');
     wrap.innerHTML = state.selected.map((slug) => {
         const d = state.bySlug.get(slug);
+        const noField = state.noField.has(slug);
+        const noRank = state.noRank.has(slug);
         const val = state.shares.get(slug);
-        return `<div class="share-row">
+        return `<div class="share-row${noField ? ' is-out' : ''}">
             <span class="deck-icons">${iconsHtml(d.icons)}</span>
             <span class="deck-chip-text">
-                <span class="deck-chip-name">${escapeHtml(d.name)}</span>
+                <a class="deck-chip-name" href="${deckLink(d)}" target="_blank" rel="noopener"
+                   title="See ${escapeHtml(d.name)} decklists on Trainer Hill">${escapeHtml(d.name)}</a>
                 <span class="deck-chip-share">observed ${fmtPct(d.share * 100)}</span>
             </span>
             <span class="share-input-wrap">
                 <input type="number" min="0" max="100" step="0.1" inputmode="decimal"
-                       value="${val}" data-share="${slug}" aria-label="${escapeHtml(d.name)} expected meta share">
+                       value="${val}" data-share="${slug}"${noField ? ' disabled' : ''}
+                       aria-label="${escapeHtml(d.name)} expected meta share">
                 <span class="pct">%</span>
+            </span>
+            <span class="role-pills">
+                <button type="button" class="field-pill${noRank ? '' : ' is-in'}"
+                        data-role="rank" data-slug="${slug}" aria-pressed="${!noRank}"
+                        title="${noRank ? 'Not ranked. Click to rank it.'
+                                        : 'Ranked. Click to drop it from the ranking, as with a bucket you cannot play.'}">rank</button>
+                <button type="button" class="field-pill${noField ? '' : ' is-in'}"
+                        data-role="field" data-slug="${slug}" aria-pressed="${!noField}"
+                        title="${noField ? 'Held out of the field. Click to put it back.'
+                                         : 'Part of the field. Click to hold it out, to test a deck nobody plays yet.'}">field</button>
             </span>
         </div>`;
     }).join('');
 
+    updateShareTotal();
+}
+
+function updateShareTotal() {
     const { total } = buildField();
     const totalEl = el('share-total');
-    if (!state.selected.length) {
-        totalEl.textContent = '';
+    if (!state.selected.length) { totalEl.textContent = ''; return; }
+
+    const held = state.selected.filter((s) => state.noField.has(s)).length;
+    totalEl.classList.toggle('is-warn', total <= 0);
+    if (total <= 0) {
+        totalEl.innerHTML = 'Give at least one deck a share above 0%.';
         return;
     }
-    totalEl.classList.toggle('is-warn', total <= 0);
-    totalEl.innerHTML = total <= 0
-        ? 'Give at least one deck a share above 0%.'
-        : `Shares total <strong>${fmtPct(total)}</strong>` +
-          (Math.abs(total - 100) > 0.5
-              ? ` — the page normalizes this to 100%, so the result reads as a win rate against these decks.`
-              : `.`);
+
+    let text = `Shares total <strong>${fmtPct(total)}</strong>`;
+    if (Math.abs(total - 100) > 0.5) {
+        text += ` — the page scales this to 100%. That treats the missing `
+             + `${fmtPct(Math.max(0, 100 - total))} of the field as though it does not exist, `
+             + `not as though it is neutral. Add <strong>Other</strong> to stand in for the rest.`;
+    } else {
+        text += '.';
+    }
+    if (held) {
+        text += ` ${held} deck${held > 1 ? 's' : ''} ranked only, held out of the field.`;
+    }
+    totalEl.innerHTML = text;
 }
 
 /* ---------- results ---------- */
@@ -272,15 +403,22 @@ function renderResults(results) {
         return;
     }
 
-    const spread = Math.max(
-        6,
-        ...results.map((r) => Math.abs(r.expected - 50))
-    );
+    // One scale for every bar and whisker, wide enough for the widest interval.
+    const spread = Math.max(6, ...results.flatMap(
+        (r) => [Math.abs(r.expected - 50), Math.abs(r.ciLow - 50), Math.abs(r.ciHigh - 50)]
+    ));
 
-    wrap.innerHTML = `<table class="data">
+    const groups = new Set(results.map((r) => r.tier)).size;
+    const caption = groups > 1
+        ? `A rule separates groups the data can tell apart. Within a group the order means nothing.`
+        : `Every deck here sits inside every other deck's interval. The data cannot rank them.`;
+
+    wrap.innerHTML = `<p class="table-caption">${caption}</p>
+    <table class="data">
         <thead><tr>
             <th></th><th>Deck</th>
             <th class="num">Expected WR</th>
+            <th class="num result-ci-head">95% interval</th>
             <th class="bar-head">vs. 50%</th>
             <th class="num">Your share</th>
             <th class="num">Games</th>
@@ -291,34 +429,38 @@ function renderResults(results) {
 
 function resultRowHtml(r, i, spread) {
     const open = state.openDeck === r.deck.slug;
+    const x = (v) => Math.max(0, Math.min(100, 50 + 50 * (v - 50) / spread));
     const delta = r.expected - 50;
-    const halfWidth = 50 * Math.min(1, Math.abs(delta) / spread);
     const fill = delta >= 0
-        ? `left:50%;width:${halfWidth}%`
-        : `right:50%;width:${halfWidth}%`;
+        ? `left:50%;width:${x(r.expected) - 50}%`
+        : `left:${x(r.expected)}%;width:${50 - x(r.expected)}%`;
+    const whisker = `left:${x(r.ciLow)}%;width:${Math.max(1, x(r.ciHigh) - x(r.ciLow))}%`;
 
-    const row = `<tr class="result-row${open ? ' is-open' : ''}" data-deck="${r.deck.slug}"
-            tabindex="0" role="button" aria-expanded="${open}">
+    const row = `<tr class="result-row${open ? ' is-open' : ''}${r.tierStart ? ' tier-start' : ''}"
+            data-deck="${r.deck.slug}" tabindex="0" role="button" aria-expanded="${open}">
         <td class="result-rank">${i + 1}</td>
         <td class="result-deck">
             <span class="result-deck-inner">
                 <span class="deck-icons">${iconsHtml(r.deck.icons)}</span>
                 ${escapeHtml(r.deck.name)}
+                ${r.inField ? '' : '<span class="held-flag" title="Ranked, but not part of the field">rank only</span>'}
             </span>
         </td>
         <td class="num result-wr">${fmtPct(r.expected)}</td>
+        <td class="num result-ci">${fmtPct(r.ciLow)} – ${fmtPct(r.ciHigh)}</td>
         <td class="bar-cell">
             <span class="bar-track">
                 <span class="bar-baseline" style="left:50%"></span>
+                <span class="bar-whisker" style="${whisker}"></span>
                 <span class="bar-fill ${delta >= 0 ? 'up' : 'down'}" style="${fill}"></span>
             </span>
         </td>
-        <td class="num result-share">${fmtPct(r.shareOfField * 100)}</td>
+        <td class="num result-share">${r.inField ? fmtPct(r.shareOfField * 100) : '—'}</td>
         <td class="num result-games">${r.games.toLocaleString()}${r.thin ? `<span class="thin-flag">${r.thin} thin</span>` : ''}</td>
     </tr>`;
 
     if (!open) return row;
-    return row + `<tr><td class="breakdown-cell" colspan="6">${breakdownHtml(r)}</td></tr>`;
+    return row + `<tr><td class="breakdown-cell" colspan="7">${breakdownHtml(r)}</td></tr>`;
 }
 
 function breakdownHtml(r) {
@@ -333,6 +475,7 @@ function breakdownHtml(r) {
                 </span>
             </td>
             <td class="num">${b.raw === null ? '—' : fmtPct(b.raw)}</td>
+            <td class="num">${b.record || '—'}</td>
             <td class="num">${b.n}${b.n < THIN ? '<span class="thin-flag">thin</span>' : ''}</td>
             <td class="num">${fmtPct(b.weight * b.wr)}</td>
         </tr>`;
@@ -346,15 +489,16 @@ function breakdownHtml(r) {
                 <th class="num">Weight</th>
                 <th class="num">Win rate</th>
                 <th class="num">Raw</th>
-                <th class="num">Decisive games</th>
+                <th class="num">W–L–T</th>
+                <th class="num">Games</th>
                 <th class="num">Contribution</th>
             </tr></thead>
             <tbody>${rows}</tbody>
             <tfoot><tr>
                 <td>Expected win rate</td>
                 <td class="num">100.0%</td>
-                <td colspan="3"></td>
-                <td class="num">${fmtPct(r.expected)}</td>
+                <td colspan="4"></td>
+                <td class="num">${fmtPct(r.expected)} ± ${(Z * r.se).toFixed(1)}</td>
             </tr></tfoot>
         </table>
     </div>`;
@@ -376,16 +520,14 @@ function renderMatrix(results) {
 
     const body = order.map((row) => {
         const cells = order.map((col) => {
-            const isMirror = row.slug === col.slug;
-            const wr = shrunkWinRate(row.index, col.index, state.k);
-            const n = decisiveGames(row.index, col.index);
-            const step = scaleStep(wr);
-            if (isMirror) {
+            if (row.slug === col.slug) {
                 return `<td class="cell is-mirror" title="Mirror match">—</td>`;
             }
-            return `<td class="cell${step.dark ? ' on-dark' : ''}${n < THIN ? ' is-thin' : ''}"
+            const m = matchup(row.index, col.index);
+            const step = scaleStep(m.wr);
+            return `<td class="cell${step.dark ? ' on-dark' : ''}${m.n < THIN ? ' is-thin' : ''}"
                 style="background:var(${step.css})"
-                data-row="${row.slug}" data-col="${col.slug}">${wr.toFixed(0)}</td>`;
+                data-row="${row.slug}" data-col="${col.slug}">${m.wr.toFixed(0)}</td>`;
         }).join('');
         return `<tr><th>${escapeHtml(row.name)}</th>${cells}</tr>`;
     }).join('');
@@ -429,28 +571,34 @@ function hideTooltip() { tooltip().hidden = true; }
 function cellTooltip(rowSlug, colSlug) {
     const a = state.bySlug.get(rowSlug);
     const b = state.bySlug.get(colSlug);
-    const m = state.grid[a.index][b.index];
-    const wr = shrunkWinRate(a.index, b.index, state.k);
-    const raw = rawWinRate(a.index, b.index);
-    const record = m ? `${m.wins}–${m.losses}–${m.ties}` : 'no recorded games';
-    const n = decisiveGames(a.index, b.index);
+    const m = matchup(a.index, b.index);
     return `<span class="tt-title"><strong>${escapeHtml(a.name)}</strong> vs ${escapeHtml(b.name)}</span>
-        <span class="tt-num">${fmtPct(wr)} after regression</span><br>
-        <span class="tt-num">${raw === null ? 'No games. Sits at 50%.' : `${fmtPct(raw)} raw · ${record} (W–L–T)`}</span>
-        ${n && n < THIN ? `<br><span class="tt-num">Only ${n} decisive games. Thin.</span>` : ''}`;
+        <span class="tt-num">${fmtPct(m.wr)} after regression</span><br>
+        <span class="tt-num">${m.raw === null
+            ? 'No games. Sits at 50%.'
+            : `${fmtPct(m.raw)} raw · ${m.record} (W–L–T)`}</span>
+        ${m.n && m.n < THIN ? `<br><span class="tt-num">Only ${m.n} games counted. Thin.</span>` : ''}`;
 }
 
 /* ---------- CSV + link ---------- */
 
 function downloadCsv(results) {
-    const head = ['rank', 'deck', 'expected_win_rate', 'your_meta_share_pct', 'decisive_games', 'thin_matchups'];
-    const lines = [head.join(',')];
+    const head = ['rank', 'deck', 'expected_win_rate', 'ci_low', 'ci_high', 'group',
+        'in_field', 'your_meta_share_pct', 'games', 'thin_matchups'];
+    const lines = [
+        `# tie rule: ${TIE_MODES[state.tieMode].formula} · regression k = ${state.k}`,
+        head.join(','),
+    ];
     results.forEach((r, i) => {
         lines.push([
             i + 1,
             `"${r.deck.name.replace(/"/g, '""')}"`,
             r.expected.toFixed(2),
-            (Number(state.shares.get(r.deck.slug)) || 0).toFixed(1),
+            r.ciLow.toFixed(2),
+            r.ciHigh.toFixed(2),
+            r.tier,
+            r.inField ? 'yes' : 'no',
+            r.inField ? (Number(state.shares.get(r.deck.slug)) || 0).toFixed(1) : '',
             r.games,
             r.thin,
         ].join(','));
@@ -473,6 +621,9 @@ function syncHash() {
         .map((s) => `${s}:${Number(state.shares.get(s)) || 0}`)
         .join(',');
     const parts = [`decks=${decks}`, `k=${state.k}`];
+    if (state.tieMode !== 'ignore') parts.push(`ties=${state.tieMode}`);
+    if (state.noRank.size) parts.push(`norank=${[...state.noRank].join(',')}`);
+    if (state.noField.size) parts.push(`nofield=${[...state.noField].join(',')}`);
     if (!state.includeMirror) parts.push('mirror=0');
     if (state.openDeck) parts.push(`open=${state.openDeck}`);
     history.replaceState(null, '', `${location.pathname}#${parts.join('&')}`);
@@ -494,11 +645,18 @@ function restoreFromHash() {
     }
     const k = Number(params.get('k'));
     if (Number.isFinite(k) && k >= 0 && k <= 60) state.k = k;
+    const ties = params.get('ties');
+    if (ties && TIE_MODES[ties]) state.tieMode = ties;
+    for (const [key, set] of [['norank', state.noRank], ['nofield', state.noField]]) {
+        const v = params.get(key);
+        if (v) v.split(',').filter((s) => state.bySlug.has(s)).forEach((s) => set.add(s));
+    }
     if (params.get('mirror') === '0') state.includeMirror = false;
     const open = params.get('open');
     if (open && state.bySlug.has(open)) state.openDeck = open;
 
     el('shrink').value = state.k;
+    el('tie-mode').value = state.tieMode;
     el('include-mirror').checked = state.includeMirror;
 }
 
@@ -515,6 +673,9 @@ function render() {
         ? 'Raw Trainer Hill win rates. A 3–0 matchup reads as 100%.'
         : `A 3–0 matchup reads as ${fmtPct(((3 + state.k / 2) / (3 + state.k)) * 100)}. ` +
           `A 60–40 record over 100 games reads as ${fmtPct(((60 + state.k / 2) / (100 + state.k)) * 100)}.`;
+    el('tie-hint').textContent = `Win rate = ${TIE_MODES[state.tieMode].formula}.`;
+    el('settings-summary').textContent =
+        `${TIE_MODES[state.tieMode].label} · regression k = ${state.k}`;
 
     renderShares();
     const results = computeResults();
@@ -522,6 +683,15 @@ function render() {
     renderMatrix(results);
     syncHash();
     return results;
+}
+
+/* Recompute without touching the share inputs, so focus and caret survive. */
+function renderLive() {
+    const results = computeResults();
+    renderResults(results);
+    renderMatrix(results);
+    updateShareTotal();
+    syncHash();
 }
 
 /* ---------- events ---------- */
@@ -534,6 +704,8 @@ function toggleDeck(slug, on) {
         }
     } else {
         state.selected = state.selected.filter((s) => s !== slug);
+        state.noRank.delete(slug);
+        state.noField.delete(slug);
         if (state.openDeck === slug) state.openDeck = null;
     }
     renderDeckPicker();
@@ -558,6 +730,8 @@ function wire() {
 
     el('clear-decks').addEventListener('click', () => {
         state.selected = [];
+        state.noRank.clear();
+        state.noField.clear();
         state.openDeck = null;
         renderDeckPicker();
         render();
@@ -566,11 +740,18 @@ function wire() {
     document.querySelectorAll('[data-preset]').forEach((btn) => {
         btn.addEventListener('click', () => {
             const n = Number(btn.dataset.preset);
-            state.selected = [...state.decks]
+            const top = [...state.decks]
                 .filter((d) => d.slug !== 'other')     // a bucket, not a deck
                 .sort((a, b) => b.share - a.share)
                 .slice(0, n)
                 .map((d) => d.slug);
+            // Other joins the field so the shares describe a whole meta, but it
+            // is not ranked, because nobody can register "Other".
+            const other = state.bySlug.get('other');
+            state.selected = other ? [...top, other.slug] : top;
+            state.noRank.clear();
+            state.noField.clear();
+            if (other) state.noRank.add(other.slug);
             resetShares('observed');
             state.openDeck = null;
             renderDeckPicker();
@@ -586,15 +767,27 @@ function wire() {
         if (!input) return;
         const pct = Number(input.value);
         state.shares.set(input.dataset.share, Number.isFinite(pct) && pct >= 0 ? pct : 0);
-        // Recompute without re-rendering the inputs, so focus and caret survive.
-        const results = computeResults();
-        renderResults(results);
-        renderMatrix(results);
-        updateShareTotal();
-        syncHash();
+        renderLive();
+    });
+
+    el('share-list').addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-role]');
+        if (!btn) return;
+        const { role, slug } = btn.dataset;
+        const set = role === 'rank' ? state.noRank : state.noField;
+        const other = role === 'rank' ? state.noField : state.noRank;
+        if (set.has(slug)) {
+            set.delete(slug);
+        } else if (other.has(slug)) {
+            return;   // turning off both roles would leave the deck doing nothing
+        } else {
+            set.add(slug);
+        }
+        render();
     });
 
     el('shrink').addEventListener('input', (e) => { state.k = Number(e.target.value); render(); });
+    el('tie-mode').addEventListener('change', (e) => { state.tieMode = e.target.value; render(); });
     el('include-mirror').addEventListener('change', (e) => {
         state.includeMirror = e.target.checked;
         render();
@@ -604,21 +797,21 @@ function wire() {
         render();
     });
 
-    el('results').addEventListener('click', (e) => {
-        const row = e.target.closest('.result-row');
-        if (!row) return;
+    const toggleOpen = (row) => {
         state.openDeck = state.openDeck === row.dataset.deck ? null : row.dataset.deck;
         renderResults(computeResults());
         syncHash();
+    };
+    el('results').addEventListener('click', (e) => {
+        const row = e.target.closest('.result-row');
+        if (row) toggleOpen(row);
     });
     el('results').addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
         const row = e.target.closest('.result-row');
         if (!row) return;
         e.preventDefault();
-        state.openDeck = state.openDeck === row.dataset.deck ? null : row.dataset.deck;
-        renderResults(computeResults());
-        syncHash();
+        toggleOpen(row);
     });
 
     const matrix = el('matrix');
@@ -641,18 +834,6 @@ function wire() {
             flash(e.target, 'Copy failed');
         }
     });
-}
-
-function updateShareTotal() {
-    const { total } = buildField();
-    const totalEl = el('share-total');
-    totalEl.classList.toggle('is-warn', total <= 0);
-    totalEl.innerHTML = total <= 0
-        ? 'Give at least one deck a share above 0%.'
-        : `Shares total <strong>${fmtPct(total)}</strong>` +
-          (Math.abs(total - 100) > 0.5
-              ? ' — the page normalizes this to 100%, so the result reads as a win rate against these decks.'
-              : '.');
 }
 
 function flash(btn, text) {

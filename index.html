@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metagross-EV — Expected Win Rates for Pokémon TCG</title>
+    <meta name="description" content="Weight Trainer Hill matchup data by your own expected meta shares to see which deck has the best expected win rate.">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+    <header>
+        <h1>Expected Win Rates</h1>
+        <p class="subtitle">
+            Weight <a href="https://www.trainerhill.com/meta?game=PTCG" target="_blank" rel="noopener">Trainer Hill</a>
+            matchup data by the meta you expect to face.
+        </p>
+        <p class="snapshot" id="snapshot">Loading matchup data…</p>
+    </header>
+
+    <main>
+        <!-- ---------- step 1: pick the decks ---------- -->
+        <section class="card" id="step-decks">
+            <div class="card-head">
+                <div>
+                    <h2><span class="step-num">1</span> Choose decks</h2>
+                    <p class="card-sub">Select the decks that you expect to play against. The page ranks
+                       these decks, and it also uses them as the field.</p>
+                </div>
+                <div class="card-actions">
+                    <button type="button" class="btn" data-preset="8">Top 8</button>
+                    <button type="button" class="btn" data-preset="12">Top 12</button>
+                    <button type="button" class="btn" data-preset="16">Top 16</button>
+                    <button type="button" class="btn btn-quiet" id="clear-decks">Clear</button>
+                </div>
+            </div>
+
+            <div class="deck-toolbar">
+                <label class="field field-grow">
+                    <span>Search</span>
+                    <input type="search" id="deck-search" placeholder="Dragapult, Gardevoir, …" autocomplete="off">
+                </label>
+                <label class="field">
+                    <span>Show</span>
+                    <select id="deck-cutoff">
+                        <option value="0.005">Decks above 0.5% usage</option>
+                        <option value="0.002" selected>Decks above 0.2% usage</option>
+                        <option value="0.001">Decks above 0.1% usage</option>
+                        <option value="0">Every deck</option>
+                    </select>
+                </label>
+                <p class="selected-count" id="selected-count"></p>
+            </div>
+
+            <div class="deck-grid" id="deck-grid"></div>
+        </section>
+
+        <!-- ---------- step 2: expected meta shares ---------- -->
+        <section class="card" id="step-shares" hidden>
+            <div class="card-head">
+                <div>
+                    <h2><span class="step-num">2</span> Set expected meta share</h2>
+                    <p class="card-sub">Each deck starts at its current usage on Trainer Hill.
+                       Type a new percentage for any deck.</p>
+                </div>
+                <div class="card-actions">
+                    <button type="button" class="btn btn-quiet" id="reset-shares">Reset to observed</button>
+                    <button type="button" class="btn btn-quiet" id="even-shares">Even split</button>
+                </div>
+            </div>
+
+            <div class="share-list" id="share-list"></div>
+
+            <p class="share-total" id="share-total"></p>
+        </section>
+
+        <!-- ---------- results ---------- -->
+        <section class="card" id="step-results" hidden>
+            <div class="card-head">
+                <div>
+                    <h2><span class="step-num">3</span> Expected win rates</h2>
+                    <p class="card-sub">Each deck's win rate against the field that you describe above.
+                       Click a deck to see each of its matchups.</p>
+                </div>
+                <div class="card-actions">
+                    <button type="button" class="btn btn-quiet" id="copy-link">Copy link</button>
+                    <button type="button" class="btn btn-quiet" id="download-csv">Download CSV</button>
+                </div>
+            </div>
+
+            <div class="results" id="results"></div>
+        </section>
+
+        <!-- ---------- settings ---------- -->
+        <section class="card card-settings" id="step-settings" hidden>
+            <h2>Settings</h2>
+            <div class="settings-row">
+                <label class="field field-slider">
+                    <span>Regression to 50% <em id="shrink-label"></em></span>
+                    <input type="range" id="shrink" min="0" max="60" step="2" value="20">
+                    <small id="shrink-hint"></small>
+                </label>
+                <label class="field field-check">
+                    <input type="checkbox" id="include-mirror" checked>
+                    <span>Include mirror matches in the field</span>
+                    <small>You do play mirrors. By default they count as a 50% slice of the meta.</small>
+                </label>
+                <label class="field field-check">
+                    <input type="checkbox" id="show-matrix" checked>
+                    <span>Show the matchup matrix</span>
+                    <small>The full head-to-head grid for the decks that you select.</small>
+                </label>
+            </div>
+        </section>
+
+        <!-- ---------- matrix ---------- -->
+        <section class="card" id="step-matrix" hidden>
+            <div class="card-head">
+                <div>
+                    <h2>Matchup matrix</h2>
+                    <p class="card-sub">The row deck's win rate against the column deck, after regression.
+                       Point at a cell to see the raw record.</p>
+                </div>
+                <div class="legend" id="matrix-legend"></div>
+            </div>
+            <div class="matrix-scroll" id="matrix"></div>
+        </section>
+    </main>
+
+    <div class="tooltip" id="tooltip" hidden></div>
+
+    <footer>
+        <h2>How this works</h2>
+        <p>
+            Matchup data comes from <a href="https://www.trainerhill.com/meta?game=PTCG" target="_blank" rel="noopener">Trainer Hill</a>.
+            The filter at the top of the page shows the window. Win rate <strong>ignores ties</strong>:
+            <code>wins / (wins + losses)</code>. Trainer Hill collects and publishes the tournament
+            data. This page only gives it a different weight.
+        </p>
+        <p>
+            The <strong>expected win rate</strong> for a deck is the average of its matchups. Each
+            matchup gets the weight of that opponent's meta share. The page then divides by the total
+            share that you enter. An example: the field is 40% Dragapult and 60% Gardevoir, and your
+            deck wins 45% against Dragapult and 55% against Gardevoir. The expected win rate is
+            <code>(0.4 × 45 + 0.6 × 55) / 1.0 = 51%</code>. Your shares do not need to total 100%.
+        </p>
+        <p>
+            <strong>Regression to 50%</strong> is why a 3–0 matchup does not show as 100%. Most
+            matchups have very few games. Across all 130 decks, the median matchup has only two
+            decisive games. The page therefore pulls each matchup toward even by a prior worth
+            <em>k</em> pseudo games: <code>(wins + k/2) / (wins + losses + k)</code>. At the default
+            <code>k = 20</code>, a 3–0 record reads as 56%. A 60–40 record over 100 games hardly
+            moves. Set <em>k</em> to 0 in Settings to see the raw numbers.
+        </p>
+        <p>
+            This also solves the empty matchups. Two thirds of all deck pairs have no recorded games.
+            With no evidence, they sit at exactly 50%.
+        </p>
+        <p>
+            The page shows the sample size everywhere. A <span class="thin-flag">thin</span> label
+            marks a matchup below 20 decisive games. Treat a thin matchup as a hint, not as a
+            measurement.
+        </p>
+        <p class="muted">
+            <a href="https://github.com/reillyowencooper/metagross-ev" target="_blank" rel="noopener">Source code on GitHub</a>
+            · Data refreshed <span id="footer-generated"></span>
+        </p>
+    </footer>
+
+    <script src="app.js?v=1"></script>
+</body>
+</html>

@@ -103,6 +103,12 @@ async function load() {
 
     describeSnapshot();
     el('preset-all').textContent = `All ${data.decks.length}`;
+    el('custom-copy').insertAdjacentHTML('beforeend',
+        [...data.decks]
+            .sort((a, b) => b.share - a.share)
+            .map((d) => `<option value="${d.slug}">${escapeHtml(d.name)} `
+                      + `(${fmtPct(d.share * 100)})</option>`)
+            .join(''));
     restoreFromHash();
     renderDeckPicker();
     render();
@@ -500,6 +506,23 @@ function updateShareTotal() {
 }
 
 /* ---------- your own deck ---------- */
+
+/* Seed the hand-entered rates from a deck that already has a record. We copy the
+   raw win rate rather than the regressed one: the estimate gets regressed again
+   on the way in, and running it through the prior twice would drag everything
+   toward 50%. A pairing with no games starts even. */
+function copyRatesFrom(slug) {
+    const source = state.bySlug.get(slug);
+    if (!source || !state.custom) return;
+    for (const target of state.selected) {
+        if (target === slug) {
+            state.custom.rates.set(target, 50);   // the source's own mirror
+            continue;
+        }
+        const raw = matchup(slug, target).raw;
+        state.custom.rates.set(target, Math.round(raw === null ? 50 : raw));
+    }
+}
 
 function renderCustom() {
     const card = el('step-custom');
@@ -1017,6 +1040,18 @@ function wire() {
         state.custom.name = e.target.value;
         registerCustom();
         renderLive();
+    });
+
+    el('custom-copy').addEventListener('change', (e) => {
+        const slug = e.target.value;
+        e.target.value = '';
+        if (!slug) return;
+        copyRatesFrom(slug);
+        if (!state.custom.name.trim()) {
+            state.custom.name = `${state.bySlug.get(slug).name} variant`;
+            registerCustom();
+        }
+        render();
     });
 
     el('custom-evidence').addEventListener('change', (e) => {

@@ -36,6 +36,12 @@ and the thin labels are for: read them before you believe a rank.
 win rate against each deck in the field, and say how much testing stands behind
 those numbers.
 
+If your brew plays like something that already has a record, **Copy win rates
+from** will fill every matchup with that deck's raw numbers so you can adjust
+from there. It copies the raw win rate rather than the regressed one, because
+the estimate gets regressed on the way back in, and running it through the prior
+twice would drag everything toward 50%.
+
 The testing level becomes a game count. An estimate backed by 30 games enters the
 arithmetic as an 18–12 record, so it regresses toward 50% exactly as a real
 record does. A 60% call reads as 56% at that setting, and the page shows you

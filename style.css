@@ -793,3 +793,21 @@ table.data tbody td.result-deck { white-space: nowrap; }
     font-size: 12.5px;
     max-width: 62ch;
 }
+
+/* The copy control sits with the rates it fills, not in the meta row above,
+   where its hint text pulled every other label out of line. */
+.custom-copy {
+    display: flex;
+    gap: 14px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.custom-copy p {
+    margin: 0 0 3px;
+    flex: 1 1 260px;
+    color: var(--muted);
+    font-size: 12px;
+    max-width: 62ch;
+}
+.custom-copy select { min-width: 220px; }

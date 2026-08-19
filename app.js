@@ -460,7 +460,7 @@ function renderShares() {
             <span class="deck-icons">${iconsHtml(d.icons)}</span>
             <span class="deck-chip-text">
                 <a class="deck-chip-name" href="${deckLink(d)}" target="_blank" rel="noopener"
-                   title="See ${escapeHtml(d.name)} decklists on Trainer Hill">${escapeHtml(d.name)}</a>
+                   title="See ${escapeHtml(d.name)} decklists">${escapeHtml(d.name)}</a>
                 <span class="deck-chip-share">observed ${fmtPct(d.share * 100)}</span>
             </span>
             <span class="share-input-wrap">
@@ -907,7 +907,7 @@ function render() {
 
     el('shrink-label').textContent = state.k === 0 ? '· off' : `· k = ${state.k}`;
     el('shrink-hint').textContent = state.k === 0
-        ? "Trainer Hill's raw numbers, so a 3–0 matchup reads as 100%."
+        ? 'No regression, so a 3–0 matchup reads as 100%.'
         : `A 3–0 reads as ${fmtPct(((3 + state.k / 2) / (3 + state.k)) * 100)} at this setting. ` +
           `Over 100 games, a 60–40 comes out at ${fmtPct(((60 + state.k / 2) / (100 + state.k)) * 100)}.`;
     el('tie-hint').textContent = `Win rate = ${TIE_MODES[state.tieMode].formula}.`;

@@ -103,6 +103,17 @@ async function load() {
 
     describeSnapshot();
     el('preset-all').textContent = `All ${data.decks.length}`;
+    /* Name the two most-played decks in the placeholder, so the hint cannot go
+       stale the way a hardcoded pair does. */
+    const busiest = [...data.decks]
+        .filter((d) => d.slug !== 'other')       // a bucket, not a deck to search for
+        .sort((a, b) => b.share - a.share)
+        .slice(0, 2)
+        .map((d) => d.name);
+    if (busiest.length === 2) {
+        el('deck-search').placeholder = `${busiest[0]}, ${busiest[1]}, …`;
+    }
+
     el('custom-copy').insertAdjacentHTML('beforeend',
         [...data.decks]
             .sort((a, b) => b.share - a.share)

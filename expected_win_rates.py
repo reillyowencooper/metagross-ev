@@ -16,6 +16,9 @@ result you get here matches what the page shows for the same inputs.
 
 Win rate ignores ties throughout: wins / (wins + losses).
 
+Any matchup can be overridden by hand with --override DECK:OPPONENT=PCT. The
+given rate is used as written, and the reverse pairing takes the complement.
+
 Meta shares live in a small CSV:
     deck_name,meta_share
     dragapult-ex,0.16
@@ -29,6 +32,8 @@ Usage:
     python expected_win_rates.py data.json meta_shares.csv --ties losses
     python expected_win_rates.py matchups.csv meta_shares.csv --shrink 0
     python expected_win_rates.py data.json meta_shares.csv -o results.csv
+    python expected_win_rates.py data.json meta_shares.csv \
+        --override dragapult-ex:slowking-scr=55
 """
 
 import argparse
@@ -99,6 +104,32 @@ def load_csv(path: str) -> dict:
     return out
 
 
+def parse_overrides(specs: list) -> dict:
+    """Hand-set win rates, as {(deck, opponent): percent}.
+
+    A spec reads DECK:OPPONENT=PCT. The rate is used as written, with no
+    regression on top: the caller states the true rate rather than reports a
+    record. The reverse pairing takes the complement, because a matchup you
+    win 55% of the time is one they win 45% of the time.
+    """
+    out = {}
+    for spec in specs:
+        try:
+            pair, pct = spec.split("=", 1)
+            deck, opponent = pair.split(":", 1)
+            rate = float(pct)
+        except ValueError:
+            sys.exit(f"Bad --override {spec!r}. Use DECK:OPPONENT=PCT, for "
+                     f"example dragapult-ex:slowking-scr=55")
+        if not 0 <= rate <= 100:
+            sys.exit(f"--override {spec!r}: a win rate runs from 0 to 100.")
+        if deck == opponent:
+            sys.exit(f"--override {spec!r}: a mirror is 50% by symmetry.")
+        out[(deck, opponent)] = rate
+        out[(opponent, deck)] = 100 - rate
+    return out
+
+
 def load_shares(path: str) -> dict:
     with open(path) as f:
         rows = list(csv.DictReader(f))
@@ -115,8 +146,13 @@ def load_shares(path: str) -> dict:
 
 
 def win_rate(matchups: dict, deck: str, opponent: str, k: float,
-             mode: str = "ignore") -> tuple:
-    """Regressed win rate, its variance, and the games the tie rule counts."""
+             mode: str = "ignore", overrides: dict = None) -> tuple:
+    """Regressed win rate, its variance, and the games the tie rule counts.
+
+    A hand-set rate replaces the win rate and nothing else. The variance still
+    comes from the games behind the pair, because asserting a number says
+    nothing about how much anyone knows.
+    """
     wins, losses, ties = matchups.get((deck, opponent), (0, 0, 0))
     rule = TIE_MODES[mode]
 
@@ -137,12 +173,16 @@ def win_rate(matchups: dict, deck: str, opponent: str, k: float,
                 if total > 0 else 1 / 12)
 
     wr = (alpha / total) * 100 if total > 0 else 50.0
+    if overrides:
+        wr = overrides.get((deck, opponent), wr)
     return wr, variance, n
 
 
 def expected_win_rates(matchups: dict, shares: dict, k: float,
                        include_mirror: bool = True,
-                       mode: str = "ignore") -> list:
+                       mode: str = "ignore",
+                       overrides: dict = None) -> list:
+    overrides = overrides or {}
     total = sum(shares.values())
     if total <= 0:
         sys.exit("Total meta share is zero -- nothing to weight against.")
@@ -159,14 +199,17 @@ def expected_win_rates(matchups: dict, shares: dict, k: float,
         games = 0
         thin = 0
         for opponent, share in opponents.items():
-            wr, var, n = win_rate(matchups, deck, opponent, k, mode)
+            wr, var, n = win_rate(matchups, deck, opponent, k, mode, overrides)
             w = share / weight
             expected += w * wr
             # Variance of a weighted mean of independent matchups. The shares
             # are the caller's assumption, so they carry no uncertainty here.
             variance += (w ** 2) * var
             games += n
-            if opponent != deck and n < THIN:
+            # A hand-set matchup is no longer thin. However few games sit
+            # behind it, the number in use is not one of them.
+            if (opponent != deck and n < THIN
+                    and (deck, opponent) not in overrides):
                 thin += 1
         margin = Z * math.sqrt(variance) * 100
         results.append({
@@ -210,10 +253,16 @@ def main() -> None:
                    help="how a tie counts (default: ignore)")
     p.add_argument("--no-mirror", action="store_true",
                    help="exclude mirror matches from the field")
+    p.add_argument("--override", action="append", default=[],
+                   metavar="DECK:OPPONENT=PCT",
+                   help="set one matchup's win rate by hand, for example "
+                        "dragapult-ex:slowking-scr=55. The reverse pairing "
+                        "takes the complement. Repeatable.")
     args = p.parse_args()
 
     matchups = load_matchups(args.matchups)
     shares = load_shares(args.shares_csv)
+    overrides = parse_overrides(args.override)
 
     decks_with_data = {d for pair in matchups for d in pair}
     unknown = sorted(set(shares) - decks_with_data)
@@ -223,12 +272,15 @@ def main() -> None:
 
     results = expected_win_rates(matchups, shares, args.shrink,
                                  include_mirror=not args.no_mirror,
-                                 mode=args.ties)
+                                 mode=args.ties, overrides=overrides)
 
     total = sum(shares.values())
     print(f"Field: {len(shares)} decks, shares total {total:.2f} (normalized)\n"
           f"Win rate: {TIE_MODES[args.ties]['formula']} · regression k = "
-          f"{args.shrink:g}\n", file=sys.stderr)
+          f"{args.shrink:g}", file=sys.stderr)
+    for (deck, opponent), rate in sorted(overrides.items()):
+        print(f"Hand-set: {deck} vs {opponent} = {rate:g}%", file=sys.stderr)
+    print(file=sys.stderr)
 
     header = (f"{'deck_name':30s} {'exp_wr':>7s} {'95% interval':>16s} "
               f"{'share':>7s} {'games':>7s} {'thin':>5s}")

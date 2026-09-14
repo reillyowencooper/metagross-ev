@@ -19,6 +19,10 @@ const state = {
        record yet. Null when unused. Its matchups are estimates, not counts, so
        they arrive as a win rate plus how much testing stands behind it. */
     custom: null,
+    /* Win rates the user typed over. The data says one thing, they say
+       another, and this holds the disagreement. One entry per pair, not per
+       direction, because the grid is symmetric. */
+    overrides: new Map(),
     k: 20,                // regression strength, in pseudo games
     tieMode: 'ignore',    // how a tie counts: ignore | losses | half
     includeMirror: true,
@@ -181,6 +185,30 @@ function counts(aSlug, bSlug) {
              : { w: 0, l: 0, t: 0, estimated: false };
 }
 
+/* The user can type over any matchup. The number they type is the number the
+   page uses, with no regression on top: they state the true rate rather than
+   report a record. The interval does not move either, because asserting a
+   number says nothing about how much anyone knows. */
+function pairKey(a, b) { return a < b ? `${a}~${b}` : `${b}~${a}`; }
+
+function overrideOf(a, b) {
+    if (a === b) return null;                    // a mirror is 50% by symmetry
+    const v = state.overrides.get(pairKey(a, b));
+    if (!Number.isFinite(v)) return null;
+    return a < b ? v : 100 - v;                  // the far side is the complement
+}
+
+function setOverride(a, b, pct) {
+    const v = Math.min(100, Math.max(0, pct));
+    state.overrides.set(pairKey(a, b), a < b ? v : 100 - v);
+}
+
+function dropOverrides(slug) {
+    for (const key of [...state.overrides.keys()]) {
+        if (key.split('~').includes(slug)) state.overrides.delete(key);
+    }
+}
+
 function matchup(aSlug, bSlug) {
     /* A mirror is exactly 50% by symmetry, whatever the record says, and it
        carries no uncertainty about that. Trainer Hill's own mirror rows are
@@ -189,7 +217,8 @@ function matchup(aSlug, bSlug) {
     if (aSlug === bSlug) {
         const c0 = counts(aSlug, bSlug);
         return {
-            wr: 50, raw: 50, variance: 0, mirror: true,
+            wr: 50, fromData: 50, overridden: false,
+            raw: 50, variance: 0, mirror: true,
             n: c0 ? c0.w + c0.l + (state.tieMode === 'ignore' ? 0 : c0.t) : 0,
             estimated: false,
             record: c0 ? `${c0.w}–${c0.l}–${c0.t}` : null,
@@ -216,8 +245,13 @@ function matchup(aSlug, bSlug) {
     const rawA = mode.alpha(w, l, t, 0);
     const rawB = mode.beta(w, l, t, 0);
 
+    const fromData = total > 0 ? (alpha / total) * 100 : 50;
+    const set = overrideOf(aSlug, bSlug);
+
     return {
-        wr: total > 0 ? (alpha / total) * 100 : 50,
+        wr: set === null ? fromData : set,
+        fromData,
+        overridden: set !== null,
         raw: n > 0 ? (rawA / (rawA + rawB)) * 100 : null,
         variance,
         n,
@@ -315,10 +349,13 @@ function computeResults() {
                 inField: !state.noField.has(deck.slug),
                 isCustom: deck.slug === CUSTOM,
                 estimated: breakdown.some((b) => b.estimated),
+                adjusted: breakdown.some((b) => b.overridden),
                 shareOfField: total > 0 && !state.noField.has(deck.slug)
                     ? shareOf(deck.slug) / total : 0,
                 games: breakdown.reduce((s, b) => s + b.n, 0),
-                thin: breakdown.filter((b) => !b.mirror && b.n < THIN).length,
+                /* An overridden matchup is no longer thin. However few games
+                   sit behind it, the number on screen is not one of them. */
+                thin: breakdown.filter((b) => !b.mirror && !b.overridden && b.n < THIN).length,
                 breakdown,
             };
         })
@@ -530,7 +567,7 @@ function copyRatesFrom(slug) {
             state.custom.rates.set(target, 50);   // the source's own mirror
             continue;
         }
-        const raw = matchup(slug, target).raw;
+        const raw = overrideOf(slug, target) ?? matchup(slug, target).raw;
         state.custom.rates.set(target, Math.round(raw === null ? 50 : raw));
     }
 }
@@ -642,6 +679,7 @@ function resultRowHtml(r, i, spread) {
                 <span class="deck-icons">${iconsHtml(r.deck.icons)}</span>
                 ${escapeHtml(r.deck.name)}
                 ${r.isCustom ? '<span class="held-flag is-custom" title="Your own numbers, entered by hand">estimate</span>' : ''}
+                ${r.adjusted ? '<span class="held-flag" title="At least one matchup is your number, not the data\'s">adjusted</span>' : ''}
                 ${r.inField ? '' : '<span class="held-flag" title="Ranked, and held out of the field">rank only</span>'}
             </span>
         </td>
@@ -668,10 +706,14 @@ function breakdownHtml(r) {
         return `<tr>
             <td>${escapeHtml(b.name)}${b.isMirror ? ' <span class="deck-chip-share">(mirror)</span>' : ''}</td>
             <td class="num">${fmtPct(b.weight * 100)}</td>
-            <td class="num">
-                <span class="wr-pill" style="background:var(${step.css});color:var(${step.dark ? '--ink-on-dark' : '--ink-on-light'})">
-                    ${fmtPct(b.wr)}
-                </span>
+            <td class="num rate-cell">
+                <button type="button" class="wr-pill${b.overridden ? ' is-set' : ''}"
+                        style="background:var(${step.css});color:var(${step.dark ? '--ink-on-dark' : '--ink-on-light'})"
+                        data-edit-row="${r.deck.slug}" data-edit-col="${b.slug}"
+                        ${b.isMirror ? 'disabled' : ''}
+                        title="${b.isMirror ? 'A mirror is 50% by symmetry.'
+                                : b.overridden ? `Your number. The data says ${fmtPct(b.fromData)}. Click to change it.`
+                                : 'Click to type your own number.'}">${fmtPct(b.wr)}</button>
             </td>
             <td class="num">${b.raw === null ? '—' : fmtPct(b.raw)}</td>
             <td class="num">${b.record || '—'}</td>
@@ -701,6 +743,104 @@ function breakdownHtml(r) {
             </tr></tfoot>
         </table>
     </div>`;
+}
+
+/* ---------- typing over a win rate ---------- */
+
+/* One editor at a time, and it lives in the cell you clicked, so the table
+   holds its shape while you type. */
+let editing = null;
+
+function nameOf(slug) { return state.bySlug.get(slug)?.name || slug; }
+
+function beginEdit(host, aSlug, bSlug) {
+    stashEdit();
+    if (aSlug === bSlug) return;                 // a mirror is not up for debate
+    /* The hand-entered deck already holds its own numbers. Send the user
+       there rather than keep one matchup in two places. */
+    if (aSlug === CUSTOM || bSlug === CUSTOM) {
+        focusCustomRate(aSlug === CUSTOM ? bSlug : aSlug);
+        return;
+    }
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'rate-edit';
+    input.min = '0';
+    input.max = '100';
+    input.step = '0.5';
+    input.inputMode = 'decimal';
+    input.value = String(Math.round(matchup(aSlug, bSlug).wr * 10) / 10);
+    input.setAttribute('aria-label',
+        `${nameOf(aSlug)} win rate against ${nameOf(bSlug)}`);
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+        if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+    });
+    input.addEventListener('blur', commitEdit);
+
+    host.dataset.editing = '1';
+    editing = { host, html: host.innerHTML, aSlug, bSlug, input };
+    host.textContent = '';
+    host.appendChild(input);
+    input.focus();
+    input.select();
+}
+
+/* Keep what was typed, without redrawing. A redraw takes the editor's cell off
+   the page, so the two steps have to be separable. */
+function stashEdit() {
+    if (!editing) return;
+    const { aSlug, bSlug, input } = editing;
+    const pct = Number(input.value);
+    editing = null;
+    if (Number.isFinite(pct)) setOverride(aSlug, bSlug, pct);
+}
+
+function commitEdit() {
+    if (!editing) return;
+    stashEdit();
+    render();
+}
+
+function cancelEdit() {
+    if (!editing) return;
+    const { host, html } = editing;
+    editing = null;
+    host.innerHTML = html;
+    delete host.dataset.editing;
+}
+
+function focusCustomRate(slug) {
+    const input = document.querySelector(`input[data-crate="${slug}"]`);
+    if (!input) return;
+    input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    input.focus();
+    input.select();
+}
+
+/* Every number the user typed, in one place, so nothing they changed can hide
+   inside the grid. */
+function renderOverrides() {
+    const wrap = el('overrides');
+    const rows = [...state.overrides]
+        .map(([key, pct]) => {
+            const [a, b] = key.split('~');
+            return { key, a, b, pct };
+        })
+        .filter((r) => state.bySlug.has(r.a) && state.bySlug.has(r.b));
+
+    wrap.hidden = !rows.length;
+    if (!rows.length) { wrap.innerHTML = ''; return; }
+
+    wrap.innerHTML = `<span class="overrides-label">Your numbers</span>
+        ${rows.map((r) => `<span class="override-pill">
+            ${escapeHtml(nameOf(r.a))} vs ${escapeHtml(nameOf(r.b))}
+            <strong>${fmtPct(r.pct)}</strong>
+            <span class="was">was ${fmtPct(matchup(r.a, r.b).fromData)}</span>
+            <button type="button" data-undo="${r.key}"
+                    aria-label="Put ${escapeHtml(nameOf(r.a))} vs ${escapeHtml(nameOf(r.b))} back to the data">&times;</button>
+        </span>`).join('')}
+        <button type="button" class="btn btn-quiet" data-undo-all>Reset all</button>`;
 }
 
 /* ---------- matrix ---------- */
@@ -734,8 +874,11 @@ function renderMatrix(results) {
             }
             const m = matchup(row.slug, col.slug);
             const step = scaleStep(m.wr);
-            return `<td class="cell${step.dark ? ' on-dark' : ''}${m.n < THIN ? ' is-thin' : ''}"
-                style="background:var(${step.css})"
+            const marks = [
+                step.dark ? ' on-dark' : '',
+                m.overridden ? ' is-set' : m.n < THIN ? ' is-thin' : '',
+            ].join('');
+            return `<td class="cell${marks}" style="background:var(${step.css})"
                 data-row="${row.slug}" data-col="${col.slug}">${m.wr.toFixed(0)}</td>`;
         }).join('');
         return `<tr><th>${escapeHtml(row.name)}</th>${cells}</tr>`;
@@ -781,12 +924,19 @@ function cellTooltip(rowSlug, colSlug) {
     const a = state.bySlug.get(rowSlug);
     const b = state.bySlug.get(colSlug);
     const m = matchup(rowSlug, colSlug);
-    return `<span class="tt-title"><strong>${escapeHtml(a.name)}</strong> vs ${escapeHtml(b.name)}</span>
+    const head = `<span class="tt-title"><strong>${escapeHtml(a.name)}</strong> vs ${escapeHtml(b.name)}</span>`;
+    const hint = '<br><span class="tt-hint">Click to type your own number.</span>';
+    if (m.overridden) {
+        return `${head}
+            <span class="tt-num">${fmtPct(m.wr)}, your number</span><br>
+            <span class="tt-num">The data says ${fmtPct(m.fromData)} · ${m.record || 'no games'}</span>${hint}`;
+    }
+    return `${head}
         <span class="tt-num">${fmtPct(m.wr)} after regression</span><br>
         <span class="tt-num">${m.raw === null
             ? "No games yet, so it sits at 50%."
             : `${fmtPct(m.raw)} raw · ${m.record} (W–L–T)`}</span>
-        ${m.n && m.n < THIN ? `<br><span class="tt-num">Only ${m.n} games behind this one, so it's thin.</span>` : ''}`;
+        ${m.n && m.n < THIN ? `<br><span class="tt-num">Only ${m.n} games behind this one, so it's thin.</span>` : ''}${hint}`;
 }
 
 /* ---------- CSV + link ---------- */
@@ -794,10 +944,14 @@ function cellTooltip(rowSlug, colSlug) {
 function downloadCsv(results) {
     const head = ['rank', 'deck', 'expected_win_rate', 'ci_low', 'ci_high', 'group',
         'source', 'in_field', 'your_meta_share_pct', 'games', 'thin_matchups'];
-    const lines = [
-        `# tie rule: ${TIE_MODES[state.tieMode].formula} · regression k = ${state.k}`,
-        head.join(','),
-    ];
+    const notes = [`# tie rule: ${TIE_MODES[state.tieMode].formula} · regression k = ${state.k}`];
+    for (const [key, pct] of state.overrides) {
+        const [a, b] = key.split('~');
+        if (state.bySlug.has(a) && state.bySlug.has(b)) {
+            notes.push(`# hand-set: ${nameOf(a)} vs ${nameOf(b)} = ${fmtPct(pct)}`);
+        }
+    }
+    const lines = [...notes, head.join(',')];
     results.forEach((r, i) => {
         lines.push([
             i + 1,
@@ -831,6 +985,10 @@ function syncHash() {
         .map((s) => `${s}:${Number(state.shares.get(s)) || 0}`)
         .join(',');
     const parts = [`decks=${decks}`, `k=${state.k}`];
+    const ov = [...state.overrides]
+        .filter(([key]) => key.split('~').every((s) => state.selected.includes(s)))
+        .map(([key, pct]) => `${key}:${pct}`);
+    if (ov.length) parts.push(`ov=${ov.join(',')}`);
     if (state.tieMode !== 'ignore') parts.push(`ties=${state.tieMode}`);
     if (state.noRank.size) parts.push(`norank=${[...state.noRank].join(',')}`);
     if (state.noField.size) parts.push(`nofield=${[...state.noField].join(',')}`);
@@ -859,6 +1017,14 @@ function restoreFromHash() {
             state.selected.push(slug);
             const pct = Number(share);
             state.shares.set(slug, Number.isFinite(pct) ? pct : observedPercent(slug));
+        }
+    }
+    for (const entry of (params.get('ov') || '').split(',').filter(Boolean)) {
+        const [pair, rate] = entry.split(':');
+        const [a, b] = (pair || '').split('~');
+        const v = Number(rate);
+        if (a !== b && state.bySlug.has(a) && state.bySlug.has(b) && Number.isFinite(v)) {
+            setOverride(a, b, v);
         }
     }
     if (params.has('cname') || params.has('crates')) {
@@ -916,6 +1082,7 @@ function render() {
 
     renderShares();
     renderCustom();
+    renderOverrides();
     const results = computeResults();
     renderResults(results);
     renderMatrix(results);
@@ -945,6 +1112,7 @@ function toggleDeck(slug, on) {
         state.noRank.delete(slug);
         state.noField.delete(slug);
         state.custom?.rates.delete(slug);
+        dropOverrides(slug);
         if (state.openDeck === slug) state.openDeck = null;
     }
     renderDeckPicker();
@@ -972,6 +1140,7 @@ function wire() {
         state.noRank.clear();
         state.noField.clear();
         state.custom = null;
+        state.overrides.clear();
         registerCustom();
         state.openDeck = null;
         renderDeckPicker();
@@ -1112,22 +1281,64 @@ function wire() {
         renderResults(computeResults());
         syncHash();
     };
+    /* Open on mousedown, not click. Committing whatever was open rebuilds the
+       table, so by the time a click would land its target is already gone. */
+    const openPill = (pill) => {
+        const { editRow, editCol } = pill.dataset;
+        commitEdit();
+        const fresh = el('results').querySelector(
+            `button.wr-pill[data-edit-row="${editRow}"][data-edit-col="${editCol}"]`);
+        if (fresh) beginEdit(fresh.parentElement, editRow, editCol);
+    };
+    el('results').addEventListener('mousedown', (e) => {
+        const pill = e.target.closest('button.wr-pill:not(:disabled)');
+        if (!pill) return;
+        e.preventDefault();
+        openPill(pill);
+    });
     el('results').addEventListener('click', (e) => {
+        if (e.target.closest('button.wr-pill')) return;   // mousedown has it
         const row = e.target.closest('.result-row');
         if (row) toggleOpen(row);
     });
     el('results').addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
+        const pill = e.target.closest('button.wr-pill:not(:disabled)');
+        if (pill) { e.preventDefault(); openPill(pill); return; }
         const row = e.target.closest('.result-row');
         if (!row) return;
         e.preventDefault();
         toggleOpen(row);
     });
 
+    el('overrides').addEventListener('click', (e) => {
+        if (e.target.closest('[data-undo-all]')) {
+            state.overrides.clear();
+            render();
+            return;
+        }
+        const undo = e.target.closest('[data-undo]');
+        if (!undo) return;
+        state.overrides.delete(undo.dataset.undo);
+        render();
+    });
+
     const matrix = el('matrix');
+    /* Open on mousedown, not click. The commit below rebuilds the grid, so by
+       the time a click would land the cell under the pointer is a new one. */
+    matrix.addEventListener('mousedown', (e) => {
+        const cell = e.target.closest('.cell[data-row]');
+        if (!cell || cell.dataset.editing) return;
+        e.preventDefault();
+        const { row, col } = cell.dataset;
+        commitEdit();
+        hideTooltip();
+        const fresh = matrix.querySelector(`.cell[data-row="${row}"][data-col="${col}"]`);
+        if (fresh) beginEdit(fresh, row, col);
+    });
     matrix.addEventListener('mousemove', (e) => {
         const cell = e.target.closest('.cell[data-row]');
-        if (!cell) { hideTooltip(); return; }
+        if (!cell || editing) { hideTooltip(); return; }
         showTooltip(cellTooltip(cell.dataset.row, cell.dataset.col), e.clientX, e.clientY);
     });
     matrix.addEventListener('mouseleave', hideTooltip);

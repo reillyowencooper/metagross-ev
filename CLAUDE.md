@@ -36,6 +36,21 @@ filter, change it in the private repository.
 - `decks` — slug, display name, sprite URLs, usage share and game count
 - `matchups` — `[deck_i, deck_j, wins_i, losses_i, ties]`, one triangle only
 - `total_matches`, `generated_at`, `source`
+- `events` — recent Limitless Labs majors, newest first. Each holds its city,
+  date, player count and `counts`, the number of players per archetype slug.
+  Labs and Trainer Hill share slugs, and an archetype with no matchup data is
+  counted in `other`. The Labs API sends no CORS headers, so the page cannot
+  fetch it.
+
+## Usage sources
+
+"Observed usage" comes from one of two sources, chosen in step 1. Trainer Hill
+gives each deck's share of matches in the date window. The last N majors give
+each deck's share of players, pooled across the events, as the Limitless
+Metagame page does. `usageOf()` is the single place that knows the source. The
+presets, the prefill, "Reset to observed" and the picker all go through it.
+A new source rewrites the shares but keeps the deck selection. The hash stores
+it as `usage=N`. Matchups always come from Trainer Hill.
 
 ## Facts that the code depends on
 

@@ -23,6 +23,10 @@ const state = {
        another, and this holds the disagreement. One entry per pair, not per
        direction, because the grid is symmetric. */
     overrides: new Map(),
+    /* Where observed usage comes from. 0 is the Trainer Hill window. A number
+       is that many recent Limitless Labs majors, pooled by player. */
+    usageEvents: 0,
+    usage: new Map(),     // slug -> fraction of players, for usageEvents > 0
     k: 20,                // regression strength, in pseudo games
     tieMode: 'ignore',    // how a tie counts: ignore | losses | half
     includeMirror: true,
@@ -124,9 +128,27 @@ async function load() {
             .map((d) => `<option value="${d.slug}">${escapeHtml(d.name)} `
                       + `(${fmtPct(d.share * 100)})</option>`)
             .join(''));
+    buildUsageSources();
     restoreFromHash();
     renderDeckPicker();
     render();
+}
+
+/* Offer the Trainer Hill window, then each run of recent majors. A snapshot
+   without events keeps the select hidden. */
+function buildUsageSources() {
+    const events = state.data.events || [];
+    el('usage-field').hidden = !events.length;
+    if (!events.length) return;
+    const f = state.data.filter;
+    const options = [`<option value="0">Trainer Hill, ${f.start_date} → ${f.end_date}</option>`];
+    events.forEach((e, i) => {
+        const label = i === 0
+            ? `Last major: ${escapeHtml(e.city)}`
+            : `Last ${i + 1} majors, since ${escapeHtml(e.city)}`;
+        options.push(`<option value="${i + 1}">${label}</option>`);
+    });
+    el('usage-source').innerHTML = options.join('');
 }
 
 function describeSnapshot() {
@@ -414,10 +436,12 @@ function renderDeckPicker() {
     const q = state.search.trim().toLowerCase();
     const visible = state.decks.filter((d) => {
         if (state.selected.includes(d.slug)) return true;   // never hide a choice
-        if (d.share < state.cutoff) return false;
+        if (usageOf(d.slug) < state.cutoff) return false;
         if (q && !d.name.toLowerCase().includes(q) && !d.slug.includes(q)) return false;
         return true;
     });
+    // The snapshot already lists decks by Trainer Hill usage.
+    if (state.usageEvents) visible.sort((a, b) => usageOf(b.slug) - usageOf(a.slug));
 
     if (!visible.length) {
         grid.innerHTML = `<p class="empty-note">Nothing matches “${escapeHtml(state.search)}”.</p>`;
@@ -429,7 +453,7 @@ function renderDeckPicker() {
                 <span class="deck-icons">${iconsHtml(d.icons, true)}</span>
                 <span class="deck-chip-text">
                     <span class="deck-chip-name">${escapeHtml(d.name)}</span>
-                    <span class="deck-chip-share">${fmtPct(d.share * 100)} of matches · ${d.games.toLocaleString()} games</span>
+                    <span class="deck-chip-share">${fmtPct(usageOf(d.slug) * 100)} of ${state.usageEvents ? 'players' : 'matches'} · ${d.games.toLocaleString()} games</span>
                 </span>
             </label>`;
         }).join('');
@@ -457,12 +481,51 @@ function deckLink(deck) {
 
 /* ---------- shares ---------- */
 
+/* Pool the last n majors the way the Limitless Metagame page does: add up the
+   players, so a big event counts for more than a small one. Trainer Hill weighs
+   by games instead, so the two sources can differ even over the same events. */
+function setUsageSource(n) {
+    const events = (state.data.events || []).slice(0, Math.max(0, n));
+    state.usageEvents = events.length;
+    state.usage = new Map();
+    let total = 0;
+    for (const e of events) {
+        for (const [slug, count] of Object.entries(e.counts)) {
+            // The fetcher folds unknown slugs into other already. This guards a
+            // snapshot whose two halves came from different deck lists.
+            const key = state.bySlug.has(slug) ? slug : 'other';
+            state.usage.set(key, (state.usage.get(key) || 0) + count);
+            total += count;
+        }
+    }
+    state.usage.forEach((c, slug) => state.usage.set(slug, total ? c / total : 0));
+    describeUsage(events, total);
+}
+
+function describeUsage(events, players) {
+    const note = el('usage-note');
+    note.hidden = !events.length;
+    if (!events.length) return;
+    const names = events.map((e) => e.city);
+    const list = names.length > 1
+        ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+        : names[0];
+    note.textContent = `Usage pooled from ${list}: `
+        + `${players.toLocaleString()} players with a list, from Limitless Labs. `
+        + `Matchups still come from Trainer Hill.`;
+}
+
+/* A deck's observed usage, as a fraction, from whichever source is chosen. */
+function usageOf(slug) {
+    if (state.usageEvents) return state.usage.get(slug) || 0;
+    return state.bySlug.get(slug)?.share || 0;
+}
+
 /* Prefill a newly selected deck with its observed usage, so the shares start as
    a description of the current meta and the user edits from there. */
 function observedPercent(slug) {
-    const d = state.bySlug.get(slug);
-    if (!d) return 0;
-    return Math.round(d.share * 1000) / 10;
+    if (!state.bySlug.has(slug)) return 0;
+    return Math.round(usageOf(slug) * 1000) / 10;
 }
 
 function resetShares(mode) {
@@ -498,7 +561,7 @@ function renderShares() {
             <span class="deck-chip-text">
                 <a class="deck-chip-name" href="${deckLink(d)}" target="_blank" rel="noopener"
                    title="See ${escapeHtml(d.name)} decklists">${escapeHtml(d.name)}</a>
-                <span class="deck-chip-share">observed ${fmtPct(d.share * 100)}</span>
+                <span class="deck-chip-share">observed ${fmtPct(usageOf(slug) * 100)}</span>
             </span>
             <span class="share-input-wrap">
                 <input type="number" min="0" max="100" step="0.1" inputmode="decimal"
@@ -989,6 +1052,7 @@ function syncHash() {
         .filter(([key]) => key.split('~').every((s) => state.selected.includes(s)))
         .map(([key, pct]) => `${key}:${pct}`);
     if (ov.length) parts.push(`ov=${ov.join(',')}`);
+    if (state.usageEvents) parts.push(`usage=${state.usageEvents}`);
     if (state.tieMode !== 'ignore') parts.push(`ties=${state.tieMode}`);
     if (state.noRank.size) parts.push(`norank=${[...state.noRank].join(',')}`);
     if (state.noField.size) parts.push(`nofield=${[...state.noField].join(',')}`);
@@ -1009,6 +1073,12 @@ function restoreFromHash() {
     const hash = location.hash.replace(/^#/, '');
     if (!hash) return;
     const params = new URLSearchParams(hash);
+    // Before the decks, so a deck with no share in the hash gets the right fallback.
+    const usage = Number(params.get('usage'));
+    if (Number.isInteger(usage) && usage > 0) {
+        setUsageSource(usage);
+        el('usage-source').value = String(state.usageEvents);
+    }
     const decks = params.get('decks');
     if (decks) {
         for (const entry of decks.split(',')) {
@@ -1152,8 +1222,8 @@ function wire() {
             const all = btn.dataset.preset === 'all';
             const ranked = [...state.decks]
                 .filter((d) => d.slug !== 'other')     // a bucket, not a deck
-                .sort((a, b) => b.share - a.share);
-            const top = (all ? ranked : ranked.slice(0, Number(btn.dataset.preset)))
+                .sort((a, b) => usageOf(b.slug) - usageOf(a.slug));
+            const top =(all ? ranked : ranked.slice(0, Number(btn.dataset.preset)))
                 .map((d) => d.slug);
 
             /* Other joins the field so the shares describe a whole meta, but it
@@ -1170,6 +1240,15 @@ function wire() {
             renderDeckPicker();
             render();
         });
+    });
+
+    /* A new source rewrites the shares, because asking for the last three
+       majors is asking for their numbers. The deck selection stays. */
+    el('usage-source').addEventListener('change', (e) => {
+        setUsageSource(Number(e.target.value));
+        if (state.selected.length) resetShares('observed');
+        renderDeckPicker();
+        render();
     });
 
     el('reset-shares').addEventListener('click', () => { resetShares('observed'); render(); });

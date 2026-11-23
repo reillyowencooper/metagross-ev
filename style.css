@@ -205,6 +205,12 @@ main {
     flex-wrap: wrap;
     margin-bottom: 14px;
 }
+.usage-note {
+    margin: -4px 0 14px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
 .selected-count {
     margin: 0 0 0 auto;
     align-self: center;

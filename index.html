@@ -44,6 +44,10 @@
                     <span>Search</span>
                     <input type="search" id="deck-search" placeholder="Search decks" autocomplete="off">
                 </label>
+                <label class="field" id="usage-field" hidden>
+                    <span>Usage from</span>
+                    <select id="usage-source"></select>
+                </label>
                 <label class="field">
                     <span>Show</span>
                     <select id="deck-cutoff">
@@ -55,6 +59,7 @@
                 </label>
                 <p class="selected-count" id="selected-count"></p>
             </div>
+            <p class="usage-note" id="usage-note" hidden></p>
 
             <div class="deck-grid" id="deck-grid"></div>
         </section>

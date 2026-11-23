@@ -52,6 +52,12 @@ filter, change it in the private repository.
   opposite side is the complement, so it can join the field. `counts()` is the
   single place that knows the difference; everything above it works on slugs.
   The CLI has no equivalent, so parity checks must use real decks only.
+- `state.overrides` holds the win rates the user typed over. It stores one
+  entry per **pair**, not per direction, keyed `a~b` in slug order. The grid is
+  symmetric, so a matchup you win 55% of the time is one they win 45% of the
+  time, and `overrideOf` flips it on the way out. The hand-entered deck keeps
+  its numbers in `state.custom.rates`, so `beginEdit` sends a click on one of
+  its cells to that card. One matchup must never live in two stores.
 - A deck has two independent roles, `noRank` and `noField`. One flag cannot
   express both cases: Other belongs in the field but is not ranked, and a rogue
   deck is ranked but held out of the field.
@@ -84,6 +90,13 @@ regression and the interval always tell the same story. Beta(0, 0) is improper,
 which happens only at `k = 0` with no games; both implementations fall back to
 `1/12`, the variance of a flat prior, rather than report a false zero.
 
+A hand-set win rate replaces the mean and nothing else. The user states the
+true rate rather than reports a record, so it skips the regression: type 55 and
+the page shows 55. The variance still comes from the games behind the pair,
+because a typed number says nothing about how much anyone knows. An overridden
+matchup also stops counting as thin, since the number on screen no longer rests
+on those games.
+
 Interval groups: walk down the ranking, and keep adding decks while their
 interval still reaches the group leader's lower bound. Inside a group the order
 is noise, and the table draws a rule where a new group starts.
@@ -115,7 +128,9 @@ The page tokens follow the sibling project `porygon-r`: Inter, a red accent
 There is no test suite. Use these two checks.
 
 1. **Math.** Run `expected_win_rates.py` and the page on the same input. Compare
-   the numbers.
+   the numbers. To check a hand-set matchup, pass
+   `--override deck:opponent=55` to the CLI and `ov=deck~opponent:55` in the
+   page hash.
 2. **Layout.** Serve the folder and take a screenshot:
 
 ```bash

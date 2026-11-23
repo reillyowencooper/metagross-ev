@@ -155,8 +155,8 @@
                     <h2><span class="step-num">3</span> Expected win rates</h2>
                     <p class="card-sub">Each deck's win rate into the field you just described. If the gap between
                        two decks is smaller than their intervals, the games don't support putting
-                       one above the other. Click any deck for its matchup-by-matchup
-                       breakdown.</p>
+                       one above the other. Click any deck for its matchup-by-matchup breakdown,
+                       then click a win rate inside it to type your own number over it.</p>
                 </div>
                 <div class="card-actions">
                     <span class="settings-summary" id="settings-summary"></span>
@@ -164,6 +164,8 @@
                     <button type="button" class="btn btn-quiet" id="download-csv">Download CSV</button>
                 </div>
             </div>
+
+            <div class="overrides" id="overrides" hidden></div>
 
             <div class="results" id="results"></div>
         </section>
@@ -205,7 +207,8 @@
                 <div>
                     <h2>Matchup matrix</h2>
                     <p class="card-sub">Each row deck's win rate into each column deck, after regression. Hover a
-                       cell to see the raw record behind it.</p>
+                       cell to see the raw record behind it. Click a cell to type your own number
+                       instead, and the opposite cell follows.</p>
                 </div>
                 <div class="legend" id="matrix-legend"></div>
             </div>
@@ -269,6 +272,15 @@
             If you also give it a meta share, it starts playing the other side: every other deck faces
             it at the complement of what you entered, because a matchup you win 60% of the time is one
             they win 40% of the time.
+        </p>
+        <p>
+            <strong>Your own numbers.</strong> The data is thin, and sometimes you know better.
+            Click any cell in the matchup matrix, or any win rate inside a deck's breakdown, and
+            type over it. The page uses your number as written, with no regression on top, because
+            you are stating a rate rather than reporting a record. The other side of the pair
+            follows: set a matchup to 55% and the reverse becomes 45%. The interval stays where it
+            was, because your number says what you believe, not how much anyone knows. Every
+            adjustment shows above the ranking, and it travels in the shared link.
         </p>
         <p>
             Sample sizes show up throughout the page. A <span class="thin-flag">thin</span> label

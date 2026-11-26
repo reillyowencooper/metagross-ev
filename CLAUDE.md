@@ -41,6 +41,12 @@ filter, change it in the private repository.
   Labs and Trainer Hill share slugs, and an archetype with no matchup data is
   counted in `other`. The Labs API sends no CORS headers, so the page cannot
   fetch it.
+- `events[].results` — optional, for "Who you'll face". One entry per player:
+  `[slug, "WLWTW…"]`, one character per round played, in order. A bye counts
+  as `W` and a double loss as `L`. Top cut is left out. The string stops where
+  the player dropped or missed day 2. A player with no list has a `null` slug,
+  and the page counts them in `other`. The private builder adds this field to
+  the newest event only. Without it, the page offers the model only.
 
 ## Usage sources
 
@@ -122,6 +128,27 @@ not a measurement. A sensitivity view is the right home for that question.
 **The two implementations must agree.** If you change one, change the other.
 To check parity, run the CLI and the page on the same decks and shares. They
 matched to four decimal places at the last check.
+
+## Who you'll face
+
+Step 4 shows the deck mix at your table for a given record. Swiss pairs by
+points: a win is 3, a tie is 1. The model starts the field at its shares and
+runs one round at a time. Each point group plays its own mix, and each deck
+wins against that mix at its regressed win rate. The tie rate is fixed at the
+snapshot's overall share of tied games. Mirrors always count in this model.
+
+A toggle picks the source, stored in the hash as `facesrc`:
+
+- `field` (the default) runs the model over the shares in step 2.
+- `major` skips the model and counts the real `results` of the newest major
+  that has them. The button stays visible but disabled until a snapshot
+  carries `results`.
+
+The model ignores drops, pair-downs, rematch rules and player skill. The total
+share stays at 100% and wins balance losses in every round; check both after a
+change.
+
+This view is page-only for now. The CLI has no equivalent.
 
 ## Colors
 

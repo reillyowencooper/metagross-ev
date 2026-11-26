@@ -918,3 +918,59 @@ table.data tbody td.result-deck { white-space: nowrap; }
     max-width: 62ch;
 }
 .custom-copy select { min-width: 220px; }
+
+/* ---------- who you face ---------- */
+.face-inputs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.face-inputs input[type="number"] {
+    width: 74px;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    font: inherit;
+    font-size: 13px;
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+}
+/* A share is a magnitude, not a win rate, so it takes one neutral hue
+   instead of the red-blue scale. */
+.share-fill {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 4px;
+    height: 10px;
+    background: var(--muted);
+    border-radius: 2px 4px 4px 2px;
+}
+.face-muted { color: var(--muted); font-size: 12.5px; }
+.face-delta { color: var(--fg-soft); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.face-rest td { color: var(--muted); font-size: 12.5px; }
+/* Every source stays in view, so the user sees what else is possible. */
+.seg {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    overflow: hidden;
+}
+.seg-btn {
+    padding: 9px 12px;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    color: var(--fg-soft);
+    cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn:hover:not(:disabled) { background: var(--border-soft); }
+.seg-btn.is-on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.seg-btn:disabled { color: var(--muted-soft); cursor: not-allowed; }
+.seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

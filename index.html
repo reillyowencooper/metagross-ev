@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-    <link rel="stylesheet" href="style.css?v=1">
+    <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
     <header>
@@ -175,6 +175,39 @@
             <div class="results" id="results"></div>
         </section>
 
+        <!-- ---------- who you face ---------- -->
+        <section class="card" id="step-face" hidden>
+            <div class="card-head">
+                <div>
+                    <h2><span class="step-num">4</span> Who you'll face</h2>
+                    <p class="card-sub">Swiss pairs you with players on the same points. Decks that beat
+                       the field reach the top tables more often, so the mix you face shifts as your
+                       record climbs. Enter your record going into a round to see that mix.</p>
+                </div>
+            </div>
+
+            <div class="face-inputs">
+                <label class="field">
+                    <span>Wins</span>
+                    <input type="number" id="face-w" min="0" max="17" step="1" value="0" inputmode="numeric">
+                </label>
+                <label class="field">
+                    <span>Losses</span>
+                    <input type="number" id="face-l" min="0" max="17" step="1" value="0" inputmode="numeric">
+                </label>
+                <label class="field">
+                    <span>Ties</span>
+                    <input type="number" id="face-t" min="0" max="17" step="1" value="0" inputmode="numeric">
+                </label>
+                <div class="field">
+                    <span>Based on</span>
+                    <div class="seg" id="face-source" role="group" aria-label="Based on"></div>
+                </div>
+            </div>
+
+            <div class="results" id="face"></div>
+        </section>
+
         <!-- ---------- settings ---------- -->
         <section class="card card-settings" id="step-settings" hidden>
             <h2>Settings</h2>
@@ -298,6 +331,6 @@
         </p>
     </footer>
 
-    <script src="app.js?v=1"></script>
+    <script src="app.js?v=4"></script>
 </body>
 </html>

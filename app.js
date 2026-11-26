@@ -27,6 +27,12 @@ const state = {
        is that many recent Limitless Labs majors, pooled by player. */
     usageEvents: 0,
     usage: new Map(),     // slug -> fraction of players, for usageEvents > 0
+    /* The record you carry into a round, and where the mix comes from:
+       field runs the model over your shares, and major counts the real
+       results of the newest major that has them. */
+    face: { w: 0, l: 0, t: 0 },
+    faceSource: 'field',
+    tieRate: 0,           // share of games tied, from the snapshot
     k: 20,                // regression strength, in pseudo games
     tieMode: 'ignore',    // how a tie counts: ignore | losses | half
     includeMirror: true,
@@ -109,6 +115,7 @@ async function load() {
         if (i !== j) state.grid[j][i] = { wins: losses, losses: wins, ties };
     }
 
+    state.tieRate = snapshotTieRate();
     describeSnapshot();
     el('preset-all').textContent = `All ${data.decks.length}`;
     /* Name the two most-played decks in the placeholder, so the hint cannot go
@@ -1002,6 +1009,228 @@ function cellTooltip(rowSlug, colSlug) {
         ${m.n && m.n < THIN ? `<br><span class="tt-num">Only ${m.n} games behind this one, so it's thin.</span>` : ''}${hint}`;
 }
 
+/* ---------- who you face ---------- */
+
+/* Swiss pairs players on the same points, so your opponent at a given record
+   is someone who reached that record too. A deck that beats the field reaches
+   the top tables more often, and the mix there drifts toward it. */
+
+const FACE_MAX_ROUNDS = 18;   // more rounds than any Swiss stage plays
+const FACE_ROWS = 15;         // decks listed before the rest fold into one line
+const FACE_THIN = 30;         // players below which a real table is flagged thin
+
+/* Share of games that end in a tie, across every non-mirror pair. A tie is
+   worth one point, so it moves a player into a group of its own. */
+function snapshotTieRate() {
+    let games = 0, ties = 0;
+    for (const [i, j, w, l, t] of state.data.matchups) {
+        if (i === j) continue;
+        games += w + l + t;
+        ties += t;
+    }
+    return games ? ties / games : 0;
+}
+
+/* The latest major that carries round-by-round results, if any. */
+function faceEvent() {
+    return (state.data.events || []).find((e) => Array.isArray(e.results) && e.results.length);
+}
+
+/* Run the field through the given number of Swiss rounds with no randomness.
+   Each point group plays its own mix, so every deck in it wins against that
+   mix at its expected win rate. Mirrors always count here: pairings do not
+   care about the setting that drops them from the ranking. */
+function simulateSwiss(rounds, { rows, total }) {
+    if (!rows.length || total <= 0) return null;
+    const slugs = rows.map((r) => r.slug);
+    const n = slugs.length;
+    const start = rows.map((r) => r.share / total);
+    const tie = state.tieRate;
+    const p = slugs.map((a) => slugs.map((b) => matchup(a, b).wr / 100));
+
+    let groups = new Map([[0, start.slice()]]);
+    for (let round = 0; round < rounds; round++) {
+        const next = new Map();
+        const add = (pts, i, m) => {
+            if (m <= 0) return;
+            if (!next.has(pts)) next.set(pts, new Array(n).fill(0));
+            next.get(pts)[i] += m;
+        };
+        for (const [pts, mass] of groups) {
+            const size = mass.reduce((s, m) => s + m, 0);
+            if (size <= 0) continue;
+            for (let i = 0; i < n; i++) {
+                if (mass[i] <= 0) continue;
+                let wr = 0;
+                for (let j = 0; j < n; j++) wr += mass[j] * p[i][j];
+                const win = (1 - tie) * (wr / size);
+                add(pts + 3, i, mass[i] * win);
+                add(pts + 1, i, mass[i] * tie);
+                add(pts, i, mass[i] * (1 - tie - win));
+            }
+        }
+        groups = next;
+    }
+    return { slugs, start, groups };
+}
+
+/* The model's answer: the deck mix on the given points before the next round. */
+function faceFromModel(played, points, field) {
+    const sim = simulateSwiss(played, field);
+    if (!sim) return null;
+    const mass = sim.groups.get(points) || new Array(sim.slugs.length).fill(0);
+    const size = mass.reduce((s, m) => s + m, 0);
+    return {
+        reach: size,
+        players: null,
+        rows: sim.slugs.map((slug, i) => ({
+            slug,
+            here: size > 0 ? mass[i] / size : 0,
+            start: sim.start[i],
+            reach: sim.start[i] > 0 ? mass[i] / sim.start[i] : 0,
+            count: null,
+        })),
+    };
+}
+
+/* What happened at the last major: everyone who sat down for the round on
+   these points, by deck. No model and no matchup data, only the results. */
+function faceFromMajor(event, played, points) {
+    const score = (s) => [...s].reduce((sum, c) => sum + (c === 'W' ? 3 : c === 'T' ? 1 : 0), 0);
+    const all = new Map();
+    const here = new Map();
+    let entrants = 0, seated = 0;
+    for (const [rawSlug, results] of event.results) {
+        if (!results) continue;
+        const slug = state.bySlug.has(rawSlug) ? rawSlug : 'other';
+        entrants += 1;
+        all.set(slug, (all.get(slug) || 0) + 1);
+        // A result for this round means the player stayed in to play it.
+        if (results.length > played && score(results.slice(0, played)) === points) {
+            seated += 1;
+            here.set(slug, (here.get(slug) || 0) + 1);
+        }
+    }
+    if (!entrants) return null;
+    return {
+        reach: seated / entrants,
+        players: seated,
+        rows: [...all.keys()].map((slug) => ({
+            slug,
+            here: seated ? (here.get(slug) || 0) / seated : 0,
+            start: all.get(slug) / entrants,
+            reach: (here.get(slug) || 0) / all.get(slug),
+            count: here.get(slug) || 0,
+        })),
+    };
+}
+
+/* Both sources stay on show. The real results need data that not every
+   snapshot has, so that button says why it is off rather than vanish. */
+function renderFaceSources(event) {
+    const btn = (value, label, off, why) => {
+        const on = state.faceSource === value;
+        return `<button type="button" class="seg-btn${on ? ' is-on' : ''}" data-face-src="${value}"
+                    aria-pressed="${on}"${off ? ` disabled title="${why}"` : ''}>${label}</button>`;
+    };
+    el('face-source').innerHTML = [
+        btn('field', 'Your meta shares', false),
+        btn('major', event ? `What happened at ${escapeHtml(event.city)}` : 'What happened at the last major', !event,
+            'Needs round-by-round results, which this snapshot does not have yet.'),
+    ].join('');
+}
+
+function renderFace() {
+    const event = faceEvent();
+    if (state.faceSource === 'major' && !event) state.faceSource = 'field';
+    renderFaceSources(event);
+
+    const { w, l, t } = state.face;
+    el('face-w').value = w;
+    el('face-l').value = l;
+    el('face-t').value = t;
+
+    const played = w + l + t;
+    const points = 3 * w + t;
+    const major = state.faceSource === 'major';
+    const face = major ? faceFromMajor(event, played, points)
+        : faceFromModel(played, points, buildField());
+    const wrap = el('face');
+
+    if (!face) {
+        wrap.innerHTML = '<p class="empty-note">Give at least one deck in the field a share above 0%.</p>';
+        return;
+    }
+
+    const record = `${w}–${l}${t ? `–${t}` : ''}`;
+    let summary = `Round ${played + 1}, on ${points} point${points === 1 ? '' : 's'} (${record} or any record worth the same). `;
+    if (major) {
+        summary += face.players
+            ? `${face.players.toLocaleString()} players at ${escapeHtml(event.city)} sat down on these points, `
+              + `${fmtPct(face.reach * 100)} of the field.`
+            : `Nobody at ${escapeHtml(event.city)} sat down for this round on these points.`;
+    } else {
+        summary += `The model puts ${fmtPct(face.reach * 100, face.reach < 0.01 ? 2 : 1)} of all players here. `
+                 + `It assumes a ${fmtPct(state.tieRate * 100)} tie rate, as in the matchup data.`;
+    }
+    const thin = major && face.players > 0 && face.players < FACE_THIN;
+    if (thin) summary += ` <span class="thin-flag">thin</span> At this size one player moves a deck by ${fmtPct(100 / face.players)}.`;
+
+    if ((major && !face.players) || (!major && face.reach <= 0)) {
+        wrap.innerHTML = `<p class="table-caption">${summary}</p>`;
+        return;
+    }
+
+    const rows = face.rows.filter((r) => r.here > 0 || r.start > 0)
+        .sort((a, b) => b.here - a.here || b.start - a.start);
+    const shown = rows.slice(0, FACE_ROWS);
+    const rest = rows.slice(FACE_ROWS);
+    const top = Math.max(...shown.map((r) => r.here), 0.0001);
+
+    const body = shown.map((r) => {
+        const d = state.bySlug.get(r.slug);
+        // Round first, so a change too small to show never prints as −0.0.
+        const delta = Math.round((r.here - r.start) * 1000) / 10;
+        const arrow = delta === 0 ? '' : delta > 0 ? '▲ ' : '▼ ';
+        const tip = major
+            ? `${r.count} of ${face.players} players on these points`
+            : `${fmtPct(r.here * 100)} of the players on these points`;
+        return `<tr title="${escapeHtml(d.name)}: ${tip}">
+            <td class="result-deck"><span class="result-deck-inner">
+                <span class="deck-icons">${iconsHtml(d.icons)}</span>${escapeHtml(d.name)}
+            </span></td>
+            <td class="num result-wr">${fmtPct(r.here * 100)}</td>
+            <td class="bar-cell"><span class="bar-track">
+                <span class="share-fill" style="width:${(r.here / top) * 100}%"></span>
+            </span></td>
+            <td class="num face-muted">${fmtPct(r.start * 100)}</td>
+            <td class="num face-delta">${arrow}${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta).toFixed(1)}</td>
+            <td class="num face-muted">${major ? r.count : fmtPct(r.reach * 100, r.reach < 0.01 ? 2 : 1)}</td>
+        </tr>`;
+    }).join('');
+
+    const restHere = rest.reduce((s, r) => s + r.here, 0);
+    const restStart = rest.reduce((s, r) => s + r.start, 0);
+    const restRow = rest.length
+        ? `<tr class="face-rest"><td>${rest.length} more deck${rest.length > 1 ? 's' : ''}</td>
+             <td class="num">${fmtPct(restHere * 100)}</td><td></td>
+             <td class="num face-muted">${fmtPct(restStart * 100)}</td><td colspan="2"></td></tr>`
+        : '';
+
+    wrap.innerHTML = `<p class="table-caption">${summary}</p>
+    <table class="data">
+        <thead><tr>
+            <th>Deck</th>
+            <th class="num">At your table</th>
+            <th class="bar-head"></th>
+            <th class="num">At the start</th>
+            <th class="num" title="Percentage points, at your table minus at the start">Change</th>
+            <th class="num">${major ? 'Players here' : 'Pilots who get here'}</th>
+        </tr></thead>
+        <tbody>${body}${restRow}</tbody>
+    </table>`;
+}
+
 /* ---------- CSV + link ---------- */
 
 function downloadCsv(results) {
@@ -1058,6 +1287,9 @@ function syncHash() {
     if (state.noField.size) parts.push(`nofield=${[...state.noField].join(',')}`);
     if (!state.includeMirror) parts.push('mirror=0');
     if (state.openDeck) parts.push(`open=${state.openDeck}`);
+    const f = state.face;
+    if (f.w || f.l || f.t) parts.push(`face=${f.w}-${f.l}-${f.t}`);
+    if (state.faceSource !== 'field') parts.push(`facesrc=${state.faceSource}`);
     const c = state.custom;
     if (c) {
         parts.push(`cname=${encodeURIComponent(c.name)}`);
@@ -1127,6 +1359,13 @@ function restoreFromHash() {
     if (params.get('mirror') === '0') state.includeMirror = false;
     const open = params.get('open');
     if (open && state.bySlug.has(open)) state.openDeck = open;
+    const face = (params.get('face') || '').split('-').map(Number);
+    if (face.length === 3 && face.every((v) => Number.isInteger(v) && v >= 0)
+        && face[0] + face[1] + face[2] < FACE_MAX_ROUNDS) {
+        state.face = { w: face[0], l: face[1], t: face[2] };
+    }
+    const facesrc = params.get('facesrc');
+    if (facesrc === 'major' && faceEvent()) state.faceSource = 'major';
 
     el('shrink').value = state.k;
     el('tie-mode').value = state.tieMode;
@@ -1140,6 +1379,7 @@ function render() {
     el('step-shares').hidden = !has;
     el('step-results').hidden = !has;
     el('step-settings').hidden = !has;
+    el('step-face').hidden = !has;
 
     el('shrink-label').textContent = state.k === 0 ? '· off' : `· k = ${state.k}`;
     el('shrink-hint').textContent = state.k === 0
@@ -1156,6 +1396,7 @@ function render() {
     const results = computeResults();
     renderResults(results);
     renderMatrix(results);
+    renderFace();
     syncHash();
     return results;
 }
@@ -1165,6 +1406,7 @@ function renderLive() {
     const results = computeResults();
     renderResults(results);
     renderMatrix(results);
+    renderFace();
     updateShareTotal();
     syncHash();
 }
@@ -1422,6 +1664,26 @@ function wire() {
     });
     matrix.addEventListener('mouseleave', hideTooltip);
     window.addEventListener('scroll', hideTooltip, { passive: true });
+
+    /* Clamp the record so it never asks about a round past the last one. */
+    for (const key of ['w', 'l', 't']) {
+        el(`face-${key}`).addEventListener('change', (e) => {
+            const v = Math.max(0, Math.floor(Number(e.target.value)) || 0);
+            const others = Object.entries(state.face)
+                .filter(([k2]) => k2 !== key)
+                .reduce((sum, [, n]) => sum + n, 0);
+            state.face[key] = Math.min(v, FACE_MAX_ROUNDS - 1 - others);
+            renderFace();
+            syncHash();
+        });
+    }
+    el('face-source').addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-face-src]:not(:disabled)');
+        if (!btn) return;
+        state.faceSource = btn.dataset.faceSrc;
+        renderFace();
+        syncHash();
+    });
 
     el('download-csv').addEventListener('click', () => downloadCsv(computeResults()));
 
